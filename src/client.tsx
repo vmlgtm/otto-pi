@@ -1,19 +1,16 @@
 import {
   Badge,
   Button,
-  Empty,
   InputArea,
-  PoweredByCloudflare,
-  Surface,
   Text
 } from "@cloudflare/kumo";
 import {
-  BrainIcon,
   CheckCircleIcon,
   CodeIcon,
   FilePlusIcon,
   GearIcon,
   GitBranchIcon,
+  InfinityIcon,
   MoonIcon,
   PaperPlaneRightIcon,
   PlusIcon,
@@ -23,7 +20,7 @@ import {
   XCircleIcon,
   XIcon
 } from "@phosphor-icons/react";
-import { code } from "@streamdown/code";
+import { createCodePlugin } from "@streamdown/code";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -31,6 +28,10 @@ import { Streamdown } from "streamdown";
 import type { ToolInfo, TranscriptMessage, TranscriptPart } from "./protocol";
 import { usePiSession } from "./use-pi-session";
 import "./styles.css";
+
+const codePlugin = createCodePlugin({
+  themes: ["github-light", "github-dark"]
+});
 
 const SESSION_KEY = "pi-harness-session";
 const MODEL = "@cf/qwen/qwen3.8-27b";
@@ -66,7 +67,7 @@ function getSession(): string {
 
 function ModeToggle() {
   const [mode, setMode] = useState(
-    () => localStorage.getItem("theme") ?? "light"
+    () => localStorage.getItem("theme") ?? "dark"
   );
 
   useEffect(() => {
@@ -88,7 +89,7 @@ function ModeToggle() {
 
 function JsonBlock({ value }: { value: unknown }) {
   return (
-    <pre className="max-h-40 overflow-auto rounded-lg bg-kumo-elevated p-2.5 text-xs leading-5 whitespace-pre-wrap break-words">
+    <pre className="max-h-40 overflow-auto rounded-lg border border-kumo-line bg-kumo-recessed p-2.5 text-xs leading-5 whitespace-pre-wrap break-words">
       {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
     </pre>
   );
@@ -102,20 +103,22 @@ function ToolCallCard({
   running: boolean;
 }) {
   return (
-    <details className="rounded-xl border border-kumo-line bg-kumo-base">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5">
+    <details className="timeline-card group overflow-hidden">
+      <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 select-none">
         {running ? (
-          <GearIcon size={14} className="animate-spin text-kumo-inactive" />
+          <GearIcon size={14} className="animate-spin text-kumo-brand" />
         ) : (
-          <CheckCircleIcon size={14} className="text-kumo-success" />
+          <div className="size-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
         )}
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-kumo-strong">
           {part.name}
         </span>
-        <Badge variant="secondary">{running ? "Running" : "Called"}</Badge>
+        <Badge variant="secondary" className="font-mono text-[10px] px-1.5 py-0.5">
+          {running ? "Running" : "Called"}
+        </Badge>
       </summary>
-      <div className="border-t border-kumo-line px-3 py-3">
-        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-kumo-inactive">
+      <div className="border-t border-kumo-line bg-kumo-base/50 px-3.5 py-3">
+        <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-kumo-inactive">
           Arguments
         </p>
         <JsonBlock value={part.arguments} />
@@ -135,26 +138,29 @@ function ToolResultCard({
     .join("\n");
   const images = part.content.filter((content) => content.type === "image");
   return (
-    <details className="rounded-xl border border-kumo-line bg-kumo-base">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5">
+    <details className="timeline-card group overflow-hidden">
+      <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 select-none">
         {part.error ? (
-          <XCircleIcon size={14} className="text-kumo-danger" />
+          <div className="size-2 rounded-full bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.7)]" />
         ) : (
-          <CheckCircleIcon size={14} className="text-kumo-success" />
+          <div className="size-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
         )}
-        <span className="min-w-0 flex-1 truncate text-xs">
-          <span className="font-semibold">{part.name}</span>
-          {text ? <span className="ml-2 text-kumo-subtle">{text}</span> : null}
+        <span className="min-w-0 flex-1 truncate font-mono text-xs">
+          <span className="font-semibold text-kumo-strong">{part.name}</span>
+          {text ? <span className="ml-2 font-sans text-kumo-subtle">{text}</span> : null}
         </span>
-        <Badge variant={part.error ? "destructive" : "secondary"}>
+        <Badge
+          variant={part.error ? "destructive" : "secondary"}
+          className="font-mono text-[10px] px-1.5 py-0.5"
+        >
           {part.error ? "Failed" : "Done"}
         </Badge>
       </summary>
-      <div className="space-y-3 border-t border-kumo-line px-3 py-3">
+      <div className="space-y-3 border-t border-kumo-line bg-kumo-base/50 px-3.5 py-3">
         {text ? (
           <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-kumo-inactive">
-              Result
+            <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-kumo-inactive">
+              Output
             </p>
             <JsonBlock value={text} />
           </div>
@@ -171,7 +177,7 @@ function ToolResultCard({
         )}
         {part.details !== undefined ? (
           <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-kumo-inactive">
+            <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-kumo-inactive">
               Details
             </p>
             <JsonBlock value={part.details} />
@@ -194,7 +200,7 @@ function AssistantPart({
       return (
         <Streamdown
           className="sd-theme text-sm leading-6"
-          plugins={{ code }}
+          plugins={{ code: codePlugin }}
           controls={false}
         >
           {part.text}
@@ -202,8 +208,8 @@ function AssistantPart({
       );
     case "thinking":
       return (
-        <details className="rounded-xl border border-kumo-line px-3 py-2">
-          <summary className="cursor-pointer list-none text-xs font-semibold text-kumo-subtle">
+        <details className="rounded-xl border border-kumo-line bg-kumo-recessed/40 px-3 py-2">
+          <summary className="cursor-pointer list-none text-xs font-semibold text-kumo-subtle hover:text-kumo-default">
             Thinking
           </summary>
           <p className="mt-2 whitespace-pre-wrap text-xs italic leading-5 text-kumo-subtle">
@@ -232,7 +238,7 @@ function UserMessage({ message }: { message: TranscriptMessage }) {
     .join("");
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-kumo-contrast px-4 py-2.5 text-sm leading-relaxed text-kumo-inverse">
+      <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm border border-white/10 bg-zinc-900/90 px-4 py-3 text-sm leading-relaxed text-zinc-100 shadow-md backdrop-blur-md">
         {text}
       </div>
     </div>
@@ -250,8 +256,8 @@ function AssistantMessage({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-kumo-brand text-white">
-        <BrainIcon size={17} weight="bold" />
+      <div className="otto-mark mt-0.5 size-8 rounded-lg">
+        <InfinityIcon size={18} weight="bold" />
       </div>
       <div className="min-w-0 flex-1 space-y-3">
         {message.parts.map((part, index) => (
@@ -335,13 +341,18 @@ function Sidebar({
 }) {
   return (
     <aside
-      className="flex min-h-0 flex-col border-l border-kumo-line bg-kumo-base"
+      className="flex min-h-0 flex-col border-l border-kumo-line bg-kumo-base/90 backdrop-blur-md"
       aria-label="Tools"
     >
-      <div className="flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-kumo-line px-4">
-        <Text size="sm" bold>
-          Tools
-        </Text>
+      <div className="flex h-[64px] shrink-0 items-center justify-between gap-2 border-b border-kumo-line px-4">
+        <div className="flex items-center gap-2">
+          <Text size="sm" bold>
+            Tools
+          </Text>
+          <Badge variant="secondary" className="font-mono text-[10px] px-1.5 py-0.5">
+            {tools.length}
+          </Badge>
+        </div>
         <Button
           variant="ghost"
           shape="square"
@@ -350,22 +361,22 @@ function Sidebar({
           icon={<XIcon size={16} />}
         />
       </div>
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3.5">
         {tools.map((tool) => (
-          <Surface
+          <div
             key={tool.name}
-            className="rounded-lg p-3 ring ring-kumo-line"
+            className="timeline-card p-3"
           >
             <div className="flex items-center gap-2">
               {activeTools.includes(tool.name) ? (
-                <GearIcon size={14} className="animate-spin text-kumo-accent" />
+                <GearIcon size={14} className="animate-spin text-kumo-brand" />
               ) : (
-                <WrenchIcon size={14} className="text-kumo-inactive" />
+                <WrenchIcon size={13} className="text-kumo-inactive" />
               )}
-              <code className="text-xs font-semibold">{tool.name}</code>
+              <code className="text-xs font-semibold text-kumo-strong">{tool.name}</code>
             </div>
-            <p className="mt-1 text-xs text-kumo-subtle">{tool.description}</p>
-          </Surface>
+            <p className="mt-1 text-xs text-kumo-subtle leading-relaxed">{tool.description}</p>
+          </div>
         ))}
       </div>
     </aside>
@@ -418,31 +429,34 @@ function App() {
 
   return (
     <div
-      className={`grid h-dvh overflow-hidden bg-kumo-elevated text-kumo-default ${
+      className={`grid h-dvh overflow-hidden studio-ambient text-kumo-default ${
         toolsOpen
-          ? "lg:grid-cols-[minmax(520px,1fr)_minmax(300px,26vw)]"
+          ? "lg:grid-cols-[minmax(520px,1fr)_minmax(300px,24vw)]"
           : "grid-cols-1"
       }`}
     >
       <section className="flex min-h-0 min-w-0 flex-col" aria-label="Chat">
-        <header className="shrink-0 border-b border-kumo-line bg-kumo-base">
-          <div className="mx-auto flex h-[68px] max-w-3xl items-center justify-between gap-3 px-5">
+        <header className="glass-header shrink-0 z-10">
+          <div className="mx-auto flex h-[64px] max-w-3xl items-center justify-between gap-3 px-5">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-kumo-brand text-white">
-                <BrainIcon size={20} weight="bold" />
+              <div className="otto-mark size-9 rounded-xl">
+                <InfinityIcon size={22} weight="bold" />
               </div>
               <div className="min-w-0">
-                <h1 className="truncate text-base font-semibold">otto-pi</h1>
-                <p className="truncate text-xs text-kumo-subtle">
-                  Session <code>{session.slice(0, 8)}</code>
+                <h1 className="truncate text-base font-semibold tracking-tight text-kumo-strong">
+                  Otto
+                </h1>
+                <p className="truncate font-mono text-[11px] text-kumo-subtle">
+                  session <span className="text-kumo-inactive">{session.slice(0, 8)}</span>
                 </p>
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              <Badge variant="secondary" className="hidden sm:inline-flex">
+              <Badge variant="secondary" className="hidden font-mono text-[11px] sm:inline-flex">
                 {MODEL.split("/").at(-1)}
               </Badge>
-              <Badge variant={connected ? "success" : "secondary"}>
+              <Badge variant={connected ? "success" : "secondary"} className="gap-1.5 font-mono text-[11px]">
+                {connected ? <span className="live-dot" /> : null}
                 {connected
                   ? "Live"
                   : status === "connecting"
@@ -470,26 +484,37 @@ function App() {
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-3xl space-y-5 px-5 py-6">
+          <div className="mx-auto max-w-3xl space-y-6 px-5 py-6">
             {empty ? (
-              <div className="py-10 sm:py-16">
-                <Empty
-                  icon={<BrainIcon size={32} />}
-                  title="Ask Pi something that needs a tool"
-                  description="Tool calls and results stream in as they happen."
-                />
-                <div className="mt-6 flex flex-wrap justify-center gap-2">
+              <div className="py-12 sm:py-20 text-center">
+                <div className="mx-auto mb-6 flex size-16 items-center justify-center rounded-2xl otto-hero-mark">
+                  <InfinityIcon size={38} weight="bold" />
+                </div>
+                <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-kumo-strong">
+                  Otto
+                </h2>
+                <p className="mx-auto mt-2 max-w-md text-sm text-kumo-subtle leading-relaxed">
+                  Autonomous engineering assistant for workspace execution, git workflows, and testing.
+                </p>
+                <div className="mt-8 grid gap-3 sm:grid-cols-3 text-left">
                   {SUGGESTIONS.map((suggestion) => (
-                    <Button
+                    <button
                       key={suggestion.label}
-                      variant="secondary"
-                      size="sm"
-                      icon={suggestion.icon}
+                      type="button"
                       disabled={!connected}
                       onClick={() => setPrompt(suggestion.value)}
+                      className="hero-card flex flex-col justify-between p-4 text-left cursor-pointer group"
                     >
-                      {suggestion.label}
-                    </Button>
+                      <div className="flex items-center gap-2 mb-2 text-kumo-strong">
+                        {suggestion.icon}
+                        <span className="text-xs font-semibold text-kumo-strong group-hover:text-white transition-colors">
+                          {suggestion.label}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-kumo-subtle line-clamp-3 leading-relaxed">
+                        {suggestion.value}
+                      </p>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -509,19 +534,19 @@ function App() {
 
             {running && !live ? (
               <div className="flex items-start gap-3">
-                <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-kumo-brand text-white">
-                  <BrainIcon size={17} weight="bold" />
+                <div className="otto-mark mt-0.5 size-8 rounded-lg">
+                  <InfinityIcon size={18} weight="bold" />
                 </div>
-                <Surface className="rounded-xl px-4 py-3 ring ring-kumo-line">
-                  <div className="flex items-center gap-2 text-sm text-kumo-subtle">
-                    <GearIcon size={15} className="animate-spin" />
+                <div className="timeline-card px-4 py-3">
+                  <div className="flex items-center gap-2.5 text-sm text-kumo-subtle">
+                    <GearIcon size={15} className="animate-spin text-kumo-brand" />
                     {retry
                       ? `Retrying: ${retry.error}`
                       : runningTools.length > 0
                         ? `Running ${runningTools.join(", ")}`
-                        : "Waiting for the model"}
+                        : "Waiting for the model..."}
                   </div>
-                </Surface>
+                </div>
               </div>
             ) : null}
 
@@ -529,7 +554,7 @@ function App() {
               tool.output ? (
                 <pre
                   key={tool.callId}
-                  className="ml-11 max-h-40 overflow-auto rounded-lg bg-kumo-elevated p-2.5 text-xs"
+                  className="ml-11 max-h-40 overflow-auto rounded-xl border border-kumo-line bg-kumo-recessed p-3 font-mono text-xs"
                 >
                   {tool.output}
                 </pre>
@@ -537,15 +562,15 @@ function App() {
             )}
 
             {queued > 0 ? (
-              <p className="ml-11 text-xs text-kumo-subtle">
-                {queued} queued behind this run
+              <p className="ml-11 font-mono text-xs text-kumo-subtle">
+                {queued} queued behind this turn
               </p>
             ) : null}
 
             {error ? (
               <div
                 role="alert"
-                className="rounded-xl bg-kumo-danger/10 px-4 py-3 text-sm text-kumo-danger"
+                className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
               >
                 {error}
               </div>
@@ -555,15 +580,15 @@ function App() {
           </div>
         </main>
 
-        <div className="shrink-0 border-t border-kumo-line bg-kumo-base">
+        <div className="shrink-0 p-4 sm:p-5">
           <form
             onSubmit={(event) => {
               event.preventDefault();
               submit();
             }}
-            className="mx-auto max-w-3xl px-5 pt-4"
+            className="mx-auto max-w-3xl"
           >
-            <div className="flex items-end gap-3 rounded-xl border border-kumo-line bg-kumo-base p-3 shadow-sm transition-shadow focus-within:border-transparent focus-within:ring-2 focus-within:ring-kumo-ring">
+            <div className="floating-dock flex items-end gap-3 rounded-2xl p-3 sm:p-3.5 transition-all focus-within:ring-2 focus-within:ring-kumo-brand/40">
               <InputArea
                 value={prompt}
                 onValueChange={setPrompt}
@@ -575,13 +600,13 @@ function App() {
                 }}
                 placeholder={
                   running
-                    ? "Queue a follow-up, or steer the running turn"
-                    : "Ask Pi to use a tool"
+                    ? "Queue a follow-up, or steer the running turn..."
+                    : "Ask Otto..."
                 }
-                aria-label="Message Pi"
+                aria-label="Message Otto"
                 disabled={!connected}
                 rows={2}
-                className="flex-1 !bg-transparent !shadow-none !ring-0 !outline-none focus:!ring-0"
+                className="flex-1 !bg-transparent !shadow-none !ring-0 !outline-none focus:!ring-0 text-sm placeholder:text-kumo-placeholder"
               />
               {running ? (
                 <div className="mb-0.5 flex gap-1.5">
@@ -612,18 +637,16 @@ function App() {
                   aria-label="Send message"
                   disabled={!connected || prompt.trim() === ""}
                   icon={<PaperPlaneRightIcon size={18} />}
-                  className="mb-0.5"
+                  className="mb-0.5 !bg-black dark:!bg-white hover:!bg-zinc-800 dark:hover:!bg-zinc-200 !text-white dark:!text-black shadow-sm"
                 />
               )}
             </div>
+            <div className="mt-2.5 flex items-center justify-center">
+              <span className="font-mono text-[10px] text-kumo-inactive">
+                Enter to send <span className="opacity-40">·</span> Shift+Enter for new line
+              </span>
+            </div>
           </form>
-          <div className="flex items-center justify-center gap-2 px-5 py-3">
-            <span className="hidden text-[10px] text-kumo-inactive sm:inline">
-              Enter to send · Shift+Enter for a new line
-            </span>
-            <span className="hidden text-kumo-line sm:inline">·</span>
-            <PoweredByCloudflare href="https://developers.cloudflare.com/agents/" />
-          </div>
         </div>
       </section>
 

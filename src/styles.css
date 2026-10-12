@@ -5,6 +5,7 @@
 @source "../node_modules/streamdown/dist/*.js";
 @source "../node_modules/@streamdown/code/dist/*.js";
 
+/* Base theme configuration */
 html,
 body,
 #root {
@@ -14,21 +15,243 @@ body,
 }
 
 body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.011em;
   min-height: 100vh;
 }
 
-/* Streamdown theme bridge — maps shadcn-style tokens to Kumo semantics */
+code,
+pre,
+.font-mono {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+}
+
+/* Thin modern scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: light-dark(rgba(15, 23, 42, 0.18) transparent, rgba(148, 163, 184, 0.16) transparent);
+}
+
+/* ==========================================================================
+   Architectural Black & White Theme Overrides (High-contrast, monochrome)
+   ========================================================================== */
+
+/* Light Mode */
+:root,
+[data-mode="light"],
+[data-theme="kumo"] {
+  --color-kumo-canvas: #ffffff;
+  --color-kumo-elevated: #ffffff;
+  --color-kumo-base: #ffffff;
+  --color-kumo-recessed: #f4f4f5;
+  --color-kumo-tint: #fafafa;
+  --color-kumo-contrast: #09090b;
+  --color-kumo-control: #ffffff;
+  --color-kumo-fill: #f4f4f5;
+  --color-kumo-fill-hover: #e4e4e7;
+  --color-kumo-interact: #e4e4e7;
+  --color-kumo-line: rgba(0, 0, 0, 0.09);
+  --color-kumo-hairline: rgba(0, 0, 0, 0.05);
+
+  --color-kumo-brand: #09090b;
+  --color-kumo-brand-hover: #27272a;
+  --text-color-kumo-brand: #09090b;
+
+  --text-color-kumo-default: #18181b;
+  --text-color-kumo-strong: #09090b;
+  --text-color-kumo-subtle: #71717a;
+  --text-color-kumo-inactive: #a1a1aa;
+  --text-color-kumo-placeholder: #a1a1aa;
+  --text-color-kumo-inverse: #ffffff;
+
+  --color-kumo-focus: #09090b;
+  --color-kumo-accent: #09090b;
+
+  --color-kumo-success: #059669;
+  --text-color-kumo-success: #059669;
+  --color-kumo-success-tint: rgba(5, 150, 105, 0.1);
+
+  --color-kumo-danger: #e11d48;
+  --text-color-kumo-danger: #e11d48;
+  --color-kumo-danger-tint: rgba(225, 29, 72, 0.1);
+
+  --color-kumo-info: #09090b;
+  --text-color-kumo-info: #09090b;
+  --color-kumo-info-tint: rgba(0, 0, 0, 0.05);
+}
+
+/* Dark Mode (Default) - Pure Monochrome High-Contrast Studio */
+:root[data-mode="dark"],
+[data-mode="dark"],
+[data-mode="dark"]:not([data-theme]),
+[data-mode="dark"] [data-theme="kumo"],
+[data-theme="kumo"][data-mode="dark"],
+[data-theme="kumo"] [data-mode="dark"] {
+  --color-kumo-canvas: #09090b;
+  --color-kumo-elevated: #09090b;
+  --color-kumo-base: #111114;
+  --color-kumo-recessed: #18181b;
+  --color-kumo-tint: #141417;
+  --color-kumo-contrast: #27272a;
+  --color-kumo-control: #18181b;
+  --color-kumo-fill: #1c1c20;
+  --color-kumo-fill-hover: #27272e;
+  --color-kumo-interact: #2e2e36;
+  --color-kumo-line: rgba(255, 255, 255, 0.08);
+  --color-kumo-hairline: rgba(255, 255, 255, 0.05);
+
+  --color-kumo-brand: #ffffff;
+  --color-kumo-brand-hover: #e4e4e7;
+  --text-color-kumo-brand: #ffffff;
+
+  --text-color-kumo-default: #e4e4e7;
+  --text-color-kumo-strong: #ffffff;
+  --text-color-kumo-subtle: #a1a1aa;
+  --text-color-kumo-inactive: #71717a;
+  --text-color-kumo-placeholder: #71717a;
+  --text-color-kumo-inverse: #000000;
+
+  --color-kumo-focus: #ffffff;
+  --color-kumo-accent: #ffffff;
+
+  --color-kumo-success: #10b981;
+  --text-color-kumo-success: #10b981;
+  --color-kumo-success-tint: rgba(16, 185, 129, 0.15);
+
+  --color-kumo-danger: #f43f5e;
+  --text-color-kumo-danger: #f43f5e;
+  --color-kumo-danger-tint: rgba(244, 63, 94, 0.15);
+
+  --color-kumo-info: #ffffff;
+  --text-color-kumo-info: #ffffff;
+  --color-kumo-info-tint: rgba(255, 255, 255, 0.1);
+}
+
+/* ==========================================================================
+   Atmospheric Studio Background & Textures (Monochrome)
+   ========================================================================== */
+
+.studio-ambient {
+  background-color: var(--color-kumo-canvas);
+  background-image: 
+    radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+}
+
+[data-mode="light"] .studio-ambient {
+  background-image: 
+    radial-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+}
+
+/* Floating Dock for Composer */
+.floating-dock {
+  background-color: light-dark(rgba(255, 255, 255, 0.95), rgba(14, 14, 17, 0.88));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.12));
+  box-shadow: 
+    0 16px 40px -8px rgba(0, 0, 0, 0.6),
+    0 0 1px 1px rgba(255, 255, 255, 0.06);
+}
+
+/* Glass Header */
+.glass-header {
+  background-color: light-dark(rgba(255, 255, 255, 0.85), rgba(14, 14, 17, 0.8));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.07));
+}
+
+/* Hero Suggestion Cards */
+.hero-card {
+  border-radius: 0.875rem;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
+  background: light-dark(#ffffff, rgba(18, 18, 22, 0.7));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hero-card:hover {
+  transform: translateY(-2px);
+  border-color: light-dark(rgba(0, 0, 0, 0.3), rgba(255, 255, 255, 0.3));
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.4);
+}
+
+/* Timeline Cards for Tool Calls */
+.timeline-card {
+  border-radius: 0.75rem;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
+  background-color: light-dark(#ffffff, rgba(18, 18, 22, 0.8));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.timeline-card:hover {
+  border-color: light-dark(rgba(0, 0, 0, 0.2), rgba(255, 255, 255, 0.2));
+  box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.4);
+}
+
+/* Brand Glyph Tiles (Monochrome) */
+.otto-mark {
+  background: light-dark(#09090b, #000000);
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.2), rgba(255, 255, 255, 0.18));
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.otto-hero-mark {
+  background: light-dark(#09090b, #000000);
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.25), rgba(255, 255, 255, 0.22));
+  color: #ffffff;
+  box-shadow: 
+    0 0 35px rgba(255, 255, 255, 0.07),
+    0 8px 30px rgba(0, 0, 0, 0.7);
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.7);
+  display: inline-block;
+  animation: live-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
+/* ==========================================================================
+   Streamdown Markdown & Code Styling (Monochrome)
+   ========================================================================== */
+
 .sd-theme {
-  --color-primary: light-dark(#e07315, #f6821f);
-  --color-primary-foreground: light-dark(#ffffff, #ffffff);
-  --color-foreground: light-dark(#111827, #e8eaed);
-  --color-background: light-dark(#ffffff, #08090d);
-  --color-muted: light-dark(#f0f2f5, #1c1f28);
-  --color-muted-foreground: light-dark(#6b7280, #9aa0ab);
-  --color-border: light-dark(#e2e5eb, #2c3040);
+  --color-primary: light-dark(#09090b, #ffffff);
+  --color-primary-foreground: light-dark(#ffffff, #09090b);
+  --color-foreground: light-dark(#18181b, #e4e4e7);
+  --color-background: light-dark(#ffffff, #0a0a0d);
+  --color-muted: light-dark(#f4f4f5, #141417);
+  --color-muted-foreground: light-dark(#71717a, #a1a1aa);
+  --color-border: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
   overflow-wrap: break-word;
   word-break: break-word;
 }
+
 .sd-theme .rounded-xl:has(pre) {
   border: none;
   border-radius: 0;
@@ -36,27 +259,28 @@ body {
   margin: 0.5rem 0;
   background: none;
 }
+
 .sd-theme .rounded-xl:has(pre) > :not(:has(pre)):not(pre) {
   display: none !important;
 }
+
 .sd-theme pre {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace !important;
   font-size: 0.8125rem;
-  line-height: 1.5;
+  line-height: 1.6;
   background: var(--color-muted);
-  border-radius: 0.375rem;
-  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.625rem;
+  padding: 0.875rem 1rem;
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
-  border: none;
   margin: 0;
 }
+
 .sd-theme pre code {
   all: unset;
   font: inherit;
-  /* `all: unset` also wipes Streamdown's line-number counter — restore it,
-     otherwise every line renders as "1" */
   counter-reset: line;
 }
 
@@ -71,10 +295,11 @@ body {
 
 .streaming-cursor {
   display: inline-block;
-  width: 0.5rem;
+  width: 0.45rem;
   height: 1rem;
-  margin-left: 0.15rem;
+  margin-left: 0.2rem;
   vertical-align: text-bottom;
-  background: var(--color-kumo-accent);
+  border-radius: 1px;
+  background: light-dark(#4f46e5, #a5b4fc);
   animation: pulse 0.8s step-start infinite;
 }
