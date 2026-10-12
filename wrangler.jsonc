@@ -7,6 +7,19 @@
   "ai": { "binding": "AI", "remote": true },
   "worker_loaders": [{ "binding": "LOADER" }],
 
+  "previews": {
+    "worker_loaders": [{ "binding": "LOADER" }],
+    "ai": { "binding": "AI", "remote": true },
+    "durable_objects": {
+      "bindings": [
+        {
+          "name": "PiAgent",
+          "class_name": "PiAgent"
+        }
+      ]
+    }
+  },
+
   "assets": {
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/agents/*"]
