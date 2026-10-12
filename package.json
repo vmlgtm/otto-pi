@@ -1,5 +1,5 @@
 {
-  "name": "@cloudflare/agents-next-pi-harness-example",
+  "name": "otto-pi",
   "description": "Experimental: pi-durable hosted on a Durable Object as an example-local PiHarness on a driver",
   "private": true,
   "type": "module",

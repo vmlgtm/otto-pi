@@ -432,7 +432,7 @@ function App() {
                 <BrainIcon size={20} weight="bold" />
               </div>
               <div className="min-w-0">
-                <h1 className="truncate text-base font-semibold">Pi harness</h1>
+                <h1 className="truncate text-base font-semibold">otto-pi</h1>
                 <p className="truncate text-xs text-kumo-subtle">
                   Session <code>{session.slice(0, 8)}</code>
                 </p>
