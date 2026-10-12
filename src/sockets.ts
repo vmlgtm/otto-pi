@@ -38,10 +38,17 @@ function sessionOf(tags: readonly string[]): string | undefined {
   return tag?.slice(SESSION_TAG_PREFIX.length);
 }
 
-function send(socket: WebSocket, message: PiServerMessage): void {
+import { sanitizeValue } from "./sanitize";
+
+function send(
+  socket: WebSocket,
+  message: PiServerMessage,
+  secrets?: readonly (string | undefined)[]
+): void {
   if (socket.readyState !== OPEN) return;
   try {
-    socket.send(JSON.stringify(message));
+    const sanitized = sanitizeValue(message, secrets);
+    socket.send(JSON.stringify(sanitized));
   } catch {
     // The socket closed between the state check and the send.
   }
@@ -64,18 +71,25 @@ export class PiSessionSockets {
   readonly #getWebSockets: (tag?: string) => WebSocket[];
   readonly #watches = new Map<WebSocket, AgentEventStream>();
   readonly #model?: PiModel;
+  readonly #secrets?: readonly (string | undefined)[];
 
   constructor(
     harness: PiHarness,
     /** The registry pi was opened with, for the tool list sent on connect. */
     registry: RegistryReader,
     getWebSockets: (tag?: string) => WebSocket[],
-    model?: PiModel
+    model?: PiModel,
+    secrets?: readonly (string | undefined)[]
   ) {
     this.#harness = harness;
     this.#registry = registry;
     this.#getWebSockets = getWebSockets;
     this.#model = model;
+    this.#secrets = secrets;
+  }
+
+  #send(socket: WebSocket, message: PiServerMessage): void {
+    send(socket, message, this.#secrets);
   }
 
   options(): WebSocketsOptions {
@@ -120,7 +134,7 @@ export class PiSessionSockets {
         console.warn("Could not set session model on connect", error);
       }
     }
-    send(connection, {
+    this.#send(connection, {
       type: "hello",
       session,
       tools: this.#registry
@@ -139,13 +153,13 @@ export class PiSessionSockets {
     await this.#unwatch(socket);
     const stream = await this.#harness.session(session).events();
     this.#watches.set(socket, stream);
-    send(socket, { type: "events", session, events: [stream.snapshot] });
+    this.#send(socket, { type: "events", session, events: [stream.snapshot] });
     stream.start(async (events) => {
       if (socket.readyState !== OPEN) {
         void this.#unwatch(socket);
         return;
       }
-      send(socket, { type: "events", session, events });
+      this.#send(socket, { type: "events", session, events });
     });
   }
 
@@ -162,17 +176,17 @@ export class PiSessionSockets {
     try {
       message = JSON.parse(raw) as PiClientMessage;
     } catch {
-      send(connection, { type: "error", message: "Malformed JSON" });
+      this.#send(connection, { type: "error", message: "Malformed JSON" });
       return;
     }
     const session = sessionOf(connection.tags) ?? ROOT_SESSION;
     try {
       const result = await this.#dispatch(connection, session, message);
       if (message.id !== undefined) {
-        send(connection, { type: "result", id: message.id, result });
+        this.#send(connection, { type: "result", id: message.id, result });
       }
     } catch (error) {
-      send(connection, {
+      this.#send(connection, {
         type: "error",
         ...(message.id === undefined ? {} : { id: message.id }),
         message: error instanceof Error ? error.message : String(error)

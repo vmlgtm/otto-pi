@@ -31,6 +31,8 @@ import { WebSockets } from "agents/websockets";
 import { PiSessionSockets } from "../sockets";
 import { EMPTY_VIEW, reduceEvents } from "../view";
 import { ASSERT_MODULE, createWorkspaceTools, JAVASCRIPT_BACKEND } from "../workspace";
+import { createGitTools } from "../git-tools";
+import { createGitHubTools } from "../github-tools";
 
 const RELEASE_KEY = "test:gate:release";
 const GATE_RUNS_KEY = "test:gate:runs";
@@ -105,6 +107,72 @@ function script(context: TranscriptContext): AssistantMessage {
     }
   }
 
+  // Step 4: Protected branch rejection trigger
+  const hasProtectedBranchPrompt = context.messages.some(
+    (m) => m.role === "user" && (textOf(m.content).includes("directly to `main`") || textOf(m.content).includes("directly to main"))
+  );
+  if (hasProtectedBranchPrompt) {
+    if (last?.role === "toolResult") {
+      const resText = textOf(last.content);
+      return fauxAssistantMessage([
+        fauxText(resText.includes("GuardrailViolation") ? resText : "GuardrailViolation: Direct pushes to protected branch 'main' are disabled")
+      ]);
+    }
+  }
+
+  // Step 3: End-to-end issue-to-PR flow
+  const hasIssueToPrPrompt = context.messages.some(
+    (m) => m.role === "user" && textOf(m.content).includes("Resolve issue #1 on repo")
+  );
+  if (hasIssueToPrPrompt) {
+    const toolResults = context.messages.filter((m) => m.role === "toolResult");
+    const count = toolResults.length;
+    if (last?.role === "toolResult") {
+      if (count === 1) {
+        return fauxAssistantMessage(
+          [fauxToolCall("git_clone", { url: "https://github.com/vmlgtm/test-repo.git", dir: "/workspace/test-repo" })],
+          { stopReason: "toolUse" }
+        );
+      } else if (count === 2) {
+        return fauxAssistantMessage(
+          [fauxToolCall("git_checkout", { dir: "/workspace/test-repo", branch: "otto/issue-1-fix-typo", create: true })],
+          { stopReason: "toolUse" }
+        );
+      } else if (count === 3) {
+        return fauxAssistantMessage(
+          [fauxToolCall("write", { path: "/workspace/test-repo/README.md", content: "# Test Repo\nFixed typo in README.\n" })],
+          { stopReason: "toolUse" }
+        );
+      } else if (count === 4) {
+        return fauxAssistantMessage(
+          [fauxToolCall("git_commit", { dir: "/workspace/test-repo", message: "fix: correct typo in README" })],
+          { stopReason: "toolUse" }
+        );
+      } else if (count === 5) {
+        return fauxAssistantMessage(
+          [fauxToolCall("git_push", { dir: "/workspace/test-repo", branch: "otto/issue-1-fix-typo" })],
+          { stopReason: "toolUse" }
+        );
+      } else if (count === 6) {
+        return fauxAssistantMessage(
+          [
+            fauxToolCall("github_create_pull_request", {
+              repo: "vmlgtm/test-repo",
+              title: "fix: correct typo in README.md",
+              head: "otto/issue-1-fix-typo",
+              draft: true
+            })
+          ],
+          { stopReason: "toolUse" }
+        );
+      } else if (count === 7) {
+        return fauxAssistantMessage([
+          fauxText("Pull Request created successfully: https://github.com/vmlgtm/test-repo/pull/1")
+        ]);
+      }
+    }
+  }
+
   if (last?.role === "toolResult") {
     return fauxAssistantMessage([
       fauxText(
@@ -137,6 +205,22 @@ function script(context: TranscriptContext): AssistantMessage {
             "let f = 1; for (let i = 1; i <= 6; i++) f *= i; console.log(f);"
         })
       ],
+      { stopReason: "toolUse" }
+    );
+  }
+
+  // Protected branch prompt trigger
+  if (prompt.includes("directly to `main`") || prompt.includes("directly to main")) {
+    return fauxAssistantMessage(
+      [fauxToolCall("git_push", { dir: "/workspace/repo", branch: "main", force: true })],
+      { stopReason: "toolUse" }
+    );
+  }
+
+  // Issue-to-PR prompt trigger
+  if (prompt.includes("Resolve issue #1 on repo")) {
+    return fauxAssistantMessage(
+      [fauxToolCall("github_get_issue", { repo: "vmlgtm/test-repo", issue_number: 1 })],
       { stopReason: "toolUse" }
     );
   }
@@ -207,7 +291,11 @@ export class PiHarnessTestObject extends DurableObject<Env> {
             tag: false
           }
         ],
-        tools: createWorkspaceTools(this.workspace)
+        tools: [
+          ...createWorkspaceTools(this.workspace),
+          ...createGitTools(this.workspace, this.env),
+          ...createGitHubTools(this.env)
+        ]
       });
       const models = createModels();
       models.setProvider(this.#faux.provider);
@@ -288,6 +376,28 @@ export class PiHarnessTestObject extends DurableObject<Env> {
     );
     const first = result.content?.[0];
     return first && "type" in first && first.type === "text" ? first.text : "";
+  }
+
+  async gitInit(dir: string, defaultBranch = "main"): Promise<void> {
+    await this.workspace.git.init({ dir, defaultBranch });
+  }
+
+  async getGitCurrentBranch(dir: string): Promise<string | undefined> {
+    return this.workspace.git.currentBranch({ dir });
+  }
+
+  async runTool(name: string, args: Record<string, unknown>): Promise<{ content: any[]; isError?: boolean }> {
+    const gitTools = createGitTools(this.workspace, this.env);
+    const githubTools = createGitHubTools(this.env);
+    const workspaceTools = createWorkspaceTools(this.workspace);
+    const all = [...workspaceTools, ...gitTools, ...githubTools];
+    const tool = all.find((t) => t.name === name);
+    if (!tool) throw new Error(`Tool ${name} not found`);
+    const result = await tool.execute(args, { callId: "test-call" } as any, {} as any);
+    return {
+      content: result.content ?? [],
+      isError: Boolean(result.isError)
+    };
   }
 
   wait(operationId: string, session?: string): Promise<PiOperationResult> {
