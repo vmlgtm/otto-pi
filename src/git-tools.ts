@@ -24,6 +24,13 @@ function extractRepoName(url: string): string {
   }
 }
 
+function getGitAuthHeader(token?: string): Record<string, string> {
+  if (!token) return {};
+  // GitHub Git Smart HTTP transport requires HTTP Basic auth
+  const encoded = btoa(`x-access-token:${token}`);
+  return { Authorization: `Basic ${encoded}` };
+}
+
 export function createGitTools(
   workspace: Workspace,
   env?: { GITHUB_TOKEN?: string }
@@ -81,7 +88,7 @@ export function createGitTools(
         // In-host credential injection: never expose token to LLM context
         const headers: Record<string, string> = {};
         if (env?.GITHUB_TOKEN && args.url.includes("github.com")) {
-          headers["Authorization"] = `token ${env.GITHUB_TOKEN}`;
+          Object.assign(headers, getGitAuthHeader(env.GITHUB_TOKEN));
         }
 
         await workspace.git.clone({
@@ -361,7 +368,7 @@ export function createGitTools(
         // In-host credential injection
         const headers: Record<string, string> = {};
         if (env?.GITHUB_TOKEN) {
-          headers["Authorization"] = `token ${env.GITHUB_TOKEN}`;
+          Object.assign(headers, getGitAuthHeader(env.GITHUB_TOKEN));
         }
 
         const pushRes = await workspace.git.push({

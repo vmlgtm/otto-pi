@@ -73,7 +73,7 @@ export class PiAgent extends DurableObject<Env> {
             loader: this.env.LOADER,
             root: "/workspace",
             access: "read-write",
-            allowGitNetwork: false,
+            allowGitNetwork: true,
             defaultTimeoutMs: 15_000,
             maxTimeoutMs: 30_000,
             egress: { mode: "none" },
