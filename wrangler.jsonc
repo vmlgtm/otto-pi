@@ -44,7 +44,17 @@
   },
   "env": {
     "test": {
-      "name": "otto-pi-test"
+      "name": "otto-pi-test",
+      "ai": { "binding": "AI", "remote": true },
+      "worker_loaders": [{ "binding": "LOADER" }],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "PiAgent",
+            "class_name": "PiAgent"
+          }
+        ]
+      }
     }
   }
 }
