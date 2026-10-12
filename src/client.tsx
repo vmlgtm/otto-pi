@@ -121,9 +121,9 @@ function ToolCallCard({
     <details className="timeline-card group overflow-hidden">
       <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 select-none">
         {running ? (
-          <GearIcon size={14} className="animate-spin text-kumo-brand" />
+          <div className="size-2 rounded-full bg-zinc-900 dark:bg-zinc-100 animate-pulse" />
         ) : (
-          <div className="size-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+          <div className="size-2 rounded-full bg-zinc-400 dark:bg-zinc-500" />
         )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold text-kumo-strong">
           {part.name}
@@ -178,9 +178,9 @@ function ToolResultCard({
     <details className="timeline-card group overflow-hidden">
       <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 select-none">
         {part.error ? (
-          <div className="size-2 rounded-full bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.7)]" />
+          <div className="size-2 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]" />
         ) : (
-          <div className="size-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+          <div className="size-2 rounded-full bg-zinc-400 dark:bg-zinc-500" />
         )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs">
           <span className="font-semibold text-kumo-strong">
@@ -655,7 +655,7 @@ function App() {
                   <div className="relative">
                     <UsersIcon size={16} />
                     {activeSubagentsCount > 0 ? (
-                      <span className="absolute -top-1 -right-1 size-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="absolute -top-1 -right-1 size-2 rounded-full bg-zinc-900 dark:bg-zinc-100 animate-pulse" />
                     ) : null}
                   </div>
                 }
