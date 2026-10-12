@@ -7,6 +7,7 @@ import {
 import {
   CheckCircleIcon,
   CodeIcon,
+  CompassIcon,
   FilePlusIcon,
   GearIcon,
   GitBranchIcon,
@@ -14,6 +15,7 @@ import {
   MoonIcon,
   PaperPlaneRightIcon,
   PlusIcon,
+  ShieldCheckIcon,
   StopIcon,
   SunIcon,
   UsersIcon,
@@ -42,6 +44,47 @@ const codePlugin = createCodePlugin({
 
 const SESSION_KEY = "pi-harness-session";
 const MODEL = "@cf/qwen/qwen3.8-27b";
+
+const ROLE_CONFIG: Record<
+  SubagentRole,
+  {
+    readonly name: string;
+    readonly icon: typeof CompassIcon;
+    readonly badgeClass: string;
+    readonly textClass: string;
+    readonly borderClass: string;
+    readonly bgClass: string;
+    readonly description: string;
+  }
+> = {
+  explorer: {
+    name: "Explorer",
+    icon: CompassIcon,
+    badgeClass: "bg-cyan-500/10 text-cyan-400 border-cyan-500/30",
+    textClass: "text-cyan-400",
+    borderClass: "border-cyan-500/40",
+    bgClass: "bg-cyan-400",
+    description: "Codebase Mapping & Read-Only Analysis"
+  },
+  coder: {
+    name: "Coder",
+    icon: CodeIcon,
+    badgeClass: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+    textClass: "text-amber-400",
+    borderClass: "border-amber-500/40",
+    bgClass: "bg-amber-400",
+    description: "Surgical Implementation & Local Test Execution"
+  },
+  reviewer: {
+    name: "Reviewer",
+    icon: ShieldCheckIcon,
+    badgeClass: "bg-purple-500/10 text-purple-400 border-purple-500/30",
+    textClass: "text-purple-400",
+    borderClass: "border-purple-500/40",
+    bgClass: "bg-purple-400",
+    description: "Diff Audit, Blast Radius & Security Verification"
+  }
+};
 
 const SUGGESTIONS = [
   {
@@ -109,6 +152,99 @@ function ToolCallCard({
   part: Extract<TranscriptPart, { type: "tool-call" }>;
   running: boolean;
 }) {
+  const isDelegate = part.name === "delegate_task";
+  const args =
+    isDelegate && typeof part.arguments === "object" && part.arguments !== null
+      ? (part.arguments as {
+          role?: SubagentRole;
+          task?: string;
+          mode?: string;
+          context?: string;
+        })
+      : null;
+  const roleCfg =
+    args?.role && args.role in ROLE_CONFIG ? ROLE_CONFIG[args.role] : null;
+
+  if (isDelegate && roleCfg && args) {
+    const RoleIcon = roleCfg.icon;
+    return (
+      <details
+        className={`timeline-card group overflow-hidden border ${roleCfg.borderClass} bg-kumo-base/80`}
+      >
+        <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 select-none hover:bg-white/5 transition-colors">
+          {running ? (
+            <GearIcon
+              size={15}
+              className={`animate-spin ${roleCfg.textClass}`}
+            />
+          ) : (
+            <div
+              className={`size-2.5 rounded-full ${roleCfg.bgClass} shadow-[0_0_8px_rgba(255,255,255,0.4)]`}
+            />
+          )}
+          <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap sm:flex-nowrap">
+            <span
+              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider ${roleCfg.badgeClass}`}
+            >
+              <RoleIcon size={12} weight="bold" />
+              {roleCfg.name}
+            </span>
+            <span className="font-mono text-xs text-kumo-inactive">
+              delegate_task
+            </span>
+            {args.task ? (
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-kumo-strong">
+                "{args.task}"
+              </span>
+            ) : null}
+          </div>
+          <Badge
+            variant={running ? "primary" : "secondary"}
+            className="font-mono text-[10px] px-1.5 py-0.5 shrink-0"
+          >
+            {running ? "Working..." : "Dispatched"}
+          </Badge>
+        </summary>
+        <div className="space-y-2.5 border-t border-kumo-line bg-kumo-recessed/40 px-3.5 py-3 text-xs">
+          <div>
+            <span className="font-mono text-[10px] uppercase font-semibold text-kumo-inactive">
+              Assigned Task
+            </span>
+            <p className="mt-0.5 text-xs font-medium text-kumo-strong leading-relaxed">
+              {args.task}
+            </p>
+          </div>
+          {args.context ? (
+            <div>
+              <span className="font-mono text-[10px] uppercase font-semibold text-kumo-inactive">
+                Architect Context
+              </span>
+              <p className="mt-0.5 text-xs text-kumo-subtle italic leading-relaxed whitespace-pre-wrap">
+                {args.context}
+              </p>
+            </div>
+          ) : null}
+          <div className="flex items-center gap-3 pt-1 text-[11px] text-kumo-inactive font-mono">
+            <span>
+              Role:{" "}
+              <strong className={roleCfg.textClass}>{roleCfg.name}</strong> (
+              {roleCfg.description})
+            </span>
+            <span>Mode: {args.mode ?? "fresh"}</span>
+          </div>
+          <details className="pt-1">
+            <summary className="cursor-pointer text-[10px] font-mono text-kumo-inactive hover:text-kumo-subtle">
+              Raw Arguments
+            </summary>
+            <div className="mt-1">
+              <JsonBlock value={part.arguments} />
+            </div>
+          </details>
+        </div>
+      </details>
+    );
+  }
+
   return (
     <details className="timeline-card group overflow-hidden">
       <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 select-none">
@@ -144,6 +280,138 @@ function ToolResultCard({
     .map((content) => (content.type === "text" ? content.text : ""))
     .join("\n");
   const images = part.content.filter((content) => content.type === "image");
+
+  const isDelegate = part.name === "delegate_task";
+  let delegateResult: {
+    sessionId?: string;
+    role?: SubagentRole;
+    status?: string;
+    summary?: string;
+    filesModified?: string[];
+    turnCount?: number;
+  } | null = null;
+
+  if (isDelegate) {
+    if (
+      part.details &&
+      typeof part.details === "object" &&
+      "role" in (part.details as any)
+    ) {
+      delegateResult = part.details as any;
+    } else if (text) {
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === "object" && "role" in parsed) {
+          delegateResult = parsed;
+        }
+      } catch {}
+    }
+  }
+
+  const roleCfg =
+    delegateResult?.role && delegateResult.role in ROLE_CONFIG
+      ? ROLE_CONFIG[delegateResult.role]
+      : null;
+
+  if (isDelegate && delegateResult && roleCfg) {
+    const RoleIcon = roleCfg.icon;
+    const isSuccess = delegateResult.status === "completed" && !part.error;
+    const isLimit = delegateResult.status === "turn_limit_reached";
+
+    return (
+      <details
+        className={`timeline-card group overflow-hidden border ${roleCfg.borderClass} bg-kumo-base/80`}
+      >
+        <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 select-none hover:bg-white/5 transition-colors">
+          {part.error ? (
+            <div className="size-2.5 rounded-full bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.7)]" />
+          ) : isSuccess ? (
+            <div className="size-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+          ) : (
+            <div className="size-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.7)]" />
+          )}
+          <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap sm:flex-nowrap">
+            <span
+              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider ${roleCfg.badgeClass}`}
+            >
+              <RoleIcon size={12} weight="bold" />
+              {roleCfg.name}
+            </span>
+            <span className="font-mono text-xs text-kumo-inactive">
+              delegate_task result
+            </span>
+            <span className="text-xs text-kumo-subtle truncate">
+              {isSuccess
+                ? `Completed in ${delegateResult.turnCount ?? 1} turn${(delegateResult.turnCount ?? 1) === 1 ? "" : "s"}`
+                : isLimit
+                  ? `Turn limit reached (${delegateResult.turnCount ?? 10} turns)`
+                  : delegateResult.status}
+              {delegateResult.filesModified &&
+              delegateResult.filesModified.length > 0
+                ? ` • ${delegateResult.filesModified.length} file${delegateResult.filesModified.length === 1 ? "" : "s"} modified`
+                : ""}
+            </span>
+          </div>
+          <Badge
+            variant={
+              part.error ? "destructive" : isSuccess ? "success" : "secondary"
+            }
+            className="font-mono text-[10px] px-1.5 py-0.5 shrink-0"
+          >
+            {part.error ? "Failed" : isSuccess ? "Done" : delegateResult.status}
+          </Badge>
+        </summary>
+        <div className="space-y-3 border-t border-kumo-line bg-kumo-base/50 px-3.5 py-3">
+          {delegateResult.summary ? (
+            <div>
+              <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-kumo-inactive">
+                Handoff Summary to Architect
+              </p>
+              <pre className="max-h-56 overflow-auto rounded-lg border border-kumo-line bg-kumo-recessed p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap text-kumo-strong">
+                {delegateResult.summary}
+              </pre>
+            </div>
+          ) : text ? (
+            <div>
+              <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-kumo-inactive">
+                Output
+              </p>
+              <JsonBlock value={text} />
+            </div>
+          ) : null}
+
+          {delegateResult.filesModified &&
+          delegateResult.filesModified.length > 0 ? (
+            <div>
+              <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-kumo-inactive">
+                Files Modified
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {delegateResult.filesModified.map((file) => (
+                  <span
+                    key={file}
+                    className="rounded-md border border-kumo-line bg-kumo-recessed px-2 py-0.5 font-mono text-xs text-kumo-strong"
+                  >
+                    {file}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <details className="mt-2">
+            <summary className="cursor-pointer text-[10px] font-mono text-kumo-inactive hover:text-kumo-subtle">
+              Raw Payload
+            </summary>
+            <div className="mt-1">
+              <JsonBlock value={part.details ?? text} />
+            </div>
+          </details>
+        </div>
+      </details>
+    );
+  }
+
   return (
     <details className="timeline-card group overflow-hidden">
       <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 select-none">
@@ -338,22 +606,22 @@ function Message({
 }
 
 function SubagentCard({ subagent }: { subagent: SubagentInfo }) {
-  const roleStyles: Record<SubagentRole, string> = {
-    explorer: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-    coder: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-    reviewer: "bg-purple-500/10 text-purple-400 border-purple-500/20"
-  };
+  const roleCfg = ROLE_CONFIG[subagent.role];
+  const RoleIcon = roleCfg?.icon ?? UsersIcon;
 
   return (
-    <div className="timeline-card p-3 space-y-2.5">
+    <div
+      className={`timeline-card p-3 space-y-2.5 border ${roleCfg?.borderClass ?? ""}`}
+    >
       <div className="flex items-center justify-between gap-1.5">
         <div className="flex items-center gap-1.5">
           <span
-            className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider ${
-              roleStyles[subagent.role]
+            className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider ${
+              roleCfg?.badgeClass ?? "bg-zinc-800 text-zinc-300 border-zinc-700"
             }`}
           >
-            {subagent.role}
+            <RoleIcon size={11} weight="bold" />
+            {roleCfg?.name ?? subagent.role}
           </span>
           <span className="font-mono text-[10px] text-kumo-inactive">
             #{subagent.sessionId.slice(-6)}
@@ -371,7 +639,8 @@ function SubagentCard({ subagent }: { subagent: SubagentInfo }) {
         >
           {subagent.status === "running" ? (
             <span className="flex items-center gap-1">
-              <GearIcon size={11} className="animate-spin" /> Running
+              <GearIcon size={11} className="animate-spin text-kumo-brand" />{" "}
+              Running
             </span>
           ) : subagent.status === "completed" ? (
             "Completed"
@@ -549,6 +818,15 @@ function App() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, live, running]);
 
+  useEffect(() => {
+    if (activeSubagentsCount > 0) {
+      setSidebarTab("subagents");
+      if (window.innerWidth >= 1024) {
+        setSidebarOpen(true);
+      }
+    }
+  }, [activeSubagentsCount]);
+
   const connected = status === "open";
 
   /** While a run is going, Enter queues a follow-up and Steer joins the run. */
@@ -654,6 +932,54 @@ function App() {
 
         <main className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl space-y-6 px-5 py-6">
+            {subagents.length > 0 ? (
+              <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-kumo-line bg-kumo-recessed/60 px-3.5 py-2.5 backdrop-blur-md shadow-sm">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-kumo-strong mr-1">
+                    <UsersIcon size={15} className="text-kumo-brand" />
+                    <span>Swarm Pipeline:</span>
+                  </div>
+                  {subagents.map((s) => {
+                    const cfg = ROLE_CONFIG[s.role];
+                    const Icon = cfg?.icon ?? UsersIcon;
+                    return (
+                      <div
+                        key={s.sessionId}
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-mono transition-all ${
+                          cfg?.badgeClass ?? "border-zinc-700 bg-zinc-800 text-zinc-300"
+                        } ${s.status === "running" ? "ring-2 ring-kumo-brand/40 shadow-sm" : ""}`}
+                      >
+                        <Icon size={12} weight="bold" />
+                        <span className="font-bold uppercase">{cfg?.name ?? s.role}</span>
+                        {s.status === "running" ? (
+                          <span className="flex items-center gap-1 text-[10px] text-amber-400 font-sans font-semibold">
+                            <GearIcon size={11} className="animate-spin" />
+                            working...
+                          </span>
+                        ) : s.status === "completed" ? (
+                          <CheckCircleIcon size={13} weight="bold" className="text-emerald-400" />
+                        ) : s.status === "turn_limit_reached" ? (
+                          <span className="text-[10px] text-amber-400">limit</span>
+                        ) : (
+                          <XCircleIcon size={13} weight="bold" className="text-rose-400" />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSidebarTab("subagents");
+                    setSidebarOpen(true);
+                  }}
+                  className="cursor-pointer text-xs font-medium text-kumo-brand hover:underline flex items-center gap-1"
+                >
+                  Inspect details →
+                </button>
+              </div>
+            ) : null}
+
             {empty ? (
               <div className="py-12 sm:py-20 text-center">
                 <div className="mx-auto mb-6 flex size-16 items-center justify-center rounded-2xl otto-hero-mark">
@@ -707,13 +1033,58 @@ function App() {
                   <InfinityIcon size={18} weight="bold" />
                 </div>
                 <div className="timeline-card px-4 py-3">
-                  <div className="flex items-center gap-2.5 text-sm text-kumo-subtle">
-                    <GearIcon size={15} className="animate-spin text-kumo-brand" />
-                    {retry
-                      ? `Retrying: ${retry.error}`
-                      : runningTools.length > 0
-                        ? `Running ${runningTools.join(", ")}`
-                        : "Waiting for the model..."}
+                  <div className="flex items-center gap-2.5 text-sm text-kumo-subtle flex-wrap">
+                    <GearIcon size={15} className="animate-spin text-kumo-brand shrink-0" />
+                    {retry ? (
+                      `Retrying: ${retry.error}`
+                    ) : runningTools.includes("delegate_task") ? (
+                      (() => {
+                        const active = subagents.find((s) => s.status === "running");
+                        const activeRole = active?.role;
+                        const roleCfg =
+                          activeRole && activeRole in ROLE_CONFIG
+                            ? ROLE_CONFIG[activeRole]
+                            : null;
+                        const RoleIcon = roleCfg?.icon;
+                        return (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-kumo-strong font-medium">
+                              Swarm active:
+                            </span>
+                            {roleCfg && RoleIcon ? (
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-wider ${roleCfg.badgeClass}`}
+                              >
+                                <RoleIcon size={13} weight="bold" />
+                                {roleCfg.name}
+                              </span>
+                            ) : (
+                              <span className="font-mono text-xs font-semibold uppercase text-kumo-strong">
+                                Subagent
+                              </span>
+                            )}
+                            {active?.task ? (
+                              <span className="text-xs text-kumo-subtle truncate max-w-[280px] sm:max-w-[420px]">
+                                "{active.task}"
+                              </span>
+                            ) : (
+                              <span className="text-xs text-kumo-subtle">
+                                working on delegated task...
+                              </span>
+                            )}
+                            {active?.turnCount !== undefined ? (
+                              <Badge variant="secondary" className="font-mono text-[10px]">
+                                Turn {active.turnCount}/10
+                              </Badge>
+                            ) : null}
+                          </div>
+                        );
+                      })()
+                    ) : runningTools.length > 0 ? (
+                      `Running ${runningTools.join(", ")}`
+                    ) : (
+                      "Waiting for the model..."
+                    )}
                   </div>
                 </div>
               </div>
