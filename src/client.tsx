@@ -16,6 +16,7 @@ import {
   PlusIcon,
   StopIcon,
   SunIcon,
+  UsersIcon,
   WrenchIcon,
   XCircleIcon,
   XIcon
@@ -25,7 +26,13 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { Streamdown } from "streamdown";
-import type { ToolInfo, TranscriptMessage, TranscriptPart } from "./protocol";
+import type {
+  SubagentInfo,
+  SubagentRole,
+  ToolInfo,
+  TranscriptMessage,
+  TranscriptPart
+} from "./protocol";
 import { usePiSession } from "./use-pi-session";
 import "./styles.css";
 
@@ -330,54 +337,184 @@ function Message({
   }
 }
 
+function SubagentCard({ subagent }: { subagent: SubagentInfo }) {
+  const roleStyles: Record<SubagentRole, string> = {
+    explorer: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    coder: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+    reviewer: "bg-purple-500/10 text-purple-400 border-purple-500/20"
+  };
+
+  return (
+    <div className="timeline-card p-3 space-y-2.5">
+      <div className="flex items-center justify-between gap-1.5">
+        <div className="flex items-center gap-1.5">
+          <span
+            className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider ${
+              roleStyles[subagent.role]
+            }`}
+          >
+            {subagent.role}
+          </span>
+          <span className="font-mono text-[10px] text-kumo-inactive">
+            #{subagent.sessionId.slice(-6)}
+          </span>
+        </div>
+        <Badge
+          variant={
+            subagent.status === "completed"
+              ? "success"
+              : subagent.status === "running"
+                ? "primary"
+                : "secondary"
+          }
+          className="font-mono text-[10px] px-1.5 py-0.5"
+        >
+          {subagent.status === "running" ? (
+            <span className="flex items-center gap-1">
+              <GearIcon size={11} className="animate-spin" /> Running
+            </span>
+          ) : subagent.status === "completed" ? (
+            "Completed"
+          ) : subagent.status === "turn_limit_reached" ? (
+            "Turn Limit"
+          ) : (
+            subagent.status
+          )}
+        </Badge>
+      </div>
+
+      <p className="text-xs text-kumo-strong font-medium leading-snug">{subagent.task}</p>
+
+      {subagent.turnCount !== undefined ? (
+        <div className="flex items-center gap-2 text-[10px] text-kumo-subtle font-mono">
+          <span>Turns: {subagent.turnCount} / 10</span>
+          {subagent.filesModified && subagent.filesModified.length > 0 ? (
+            <span>• Files: {subagent.filesModified.length}</span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {subagent.filesModified && subagent.filesModified.length > 0 ? (
+        <div className="flex flex-wrap gap-1">
+          {subagent.filesModified.map((f) => (
+            <span
+              key={f}
+              className="rounded bg-kumo-recessed px-1.5 py-0.5 font-mono text-[9px] text-kumo-subtle"
+            >
+              {f.split("/").pop()}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {subagent.summary ? (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-[10px] font-semibold text-kumo-brand hover:underline">
+            View Handoff Summary
+          </summary>
+          <pre className="mt-1.5 max-h-36 overflow-auto rounded-lg border border-kumo-line bg-kumo-recessed p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-kumo-subtle">
+            {subagent.summary}
+          </pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 function Sidebar({
+  tab,
+  setTab,
   tools,
   activeTools,
+  subagents,
   onClose
 }: {
+  tab: "subagents" | "tools";
+  setTab: (tab: "subagents" | "tools") => void;
   tools: readonly ToolInfo[];
   activeTools: readonly string[];
+  subagents: readonly SubagentInfo[];
   onClose: () => void;
 }) {
+  const activeSubagentsCount = subagents.filter((s) => s.status === "running").length;
+
   return (
     <aside
       className="flex min-h-0 flex-col border-l border-kumo-line bg-kumo-base/90 backdrop-blur-md"
-      aria-label="Tools"
+      aria-label="Sidebar"
     >
       <div className="flex h-[64px] shrink-0 items-center justify-between gap-2 border-b border-kumo-line px-4">
-        <div className="flex items-center gap-2">
-          <Text size="sm" bold>
+        <div className="flex items-center gap-1 rounded-xl bg-kumo-recessed/60 p-1">
+          <button
+            type="button"
+            onClick={() => setTab("subagents")}
+            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${
+              tab === "subagents"
+                ? "bg-kumo-base text-kumo-strong shadow-sm"
+                : "text-kumo-subtle hover:text-kumo-strong"
+            }`}
+          >
+            <UsersIcon size={14} />
+            Swarm
+            <Badge variant="secondary" className="font-mono text-[9px] px-1 py-0">
+              {subagents.length}
+            </Badge>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("tools")}
+            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${
+              tab === "tools"
+                ? "bg-kumo-base text-kumo-strong shadow-sm"
+                : "text-kumo-subtle hover:text-kumo-strong"
+            }`}
+          >
+            <WrenchIcon size={14} />
             Tools
-          </Text>
-          <Badge variant="secondary" className="font-mono text-[10px] px-1.5 py-0.5">
-            {tools.length}
-          </Badge>
+            <Badge variant="secondary" className="font-mono text-[9px] px-1 py-0">
+              {tools.length}
+            </Badge>
+          </button>
         </div>
         <Button
           variant="ghost"
           shape="square"
-          aria-label="Close tools"
+          aria-label="Close sidebar"
           onClick={onClose}
           icon={<XIcon size={16} />}
         />
       </div>
+
       <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3.5">
-        {tools.map((tool) => (
-          <div
-            key={tool.name}
-            className="timeline-card p-3"
-          >
-            <div className="flex items-center gap-2">
-              {activeTools.includes(tool.name) ? (
-                <GearIcon size={14} className="animate-spin text-kumo-brand" />
-              ) : (
-                <WrenchIcon size={13} className="text-kumo-inactive" />
-              )}
-              <code className="text-xs font-semibold text-kumo-strong">{tool.name}</code>
+        {tab === "subagents" ? (
+          subagents.length === 0 ? (
+            <div className="py-12 text-center text-kumo-subtle space-y-2">
+              <UsersIcon size={28} className="mx-auto text-kumo-inactive" />
+              <p className="text-xs font-medium">No subagents active</p>
+              <p className="text-[11px] max-w-[220px] mx-auto text-kumo-inactive">
+                The Architect delegates modular tasks to Explorer, Coder, and Reviewer subagents.
+              </p>
             </div>
-            <p className="mt-1 text-xs text-kumo-subtle leading-relaxed">{tool.description}</p>
-          </div>
-        ))}
+          ) : (
+            subagents.map((subagent) => (
+              <SubagentCard key={subagent.sessionId} subagent={subagent} />
+            ))
+          )
+        ) : (
+          tools.map((tool) => (
+            <div key={tool.name} className="timeline-card p-3">
+              <div className="flex items-center gap-2">
+                {activeTools.includes(tool.name) ? (
+                  <GearIcon size={14} className="animate-spin text-kumo-brand" />
+                ) : (
+                  <WrenchIcon size={13} className="text-kumo-inactive" />
+                )}
+                <code className="text-xs font-semibold text-kumo-strong">{tool.name}</code>
+              </div>
+              <p className="mt-1 text-xs text-kumo-subtle leading-relaxed">{tool.description}</p>
+            </div>
+          ))
+        )}
       </div>
     </aside>
   );
@@ -386,9 +523,10 @@ function Sidebar({
 function App() {
   const [session, setSession] = useState(getSession);
   const [prompt, setPrompt] = useState("");
-  const [toolsOpen, setToolsOpen] = useState(
+  const [sidebarOpen, setSidebarOpen] = useState(
     () => window.matchMedia("(min-width: 1100px)").matches
   );
+  const [sidebarTab, setSidebarTab] = useState<"subagents" | "tools">("subagents");
   const endRef = useRef<HTMLDivElement>(null);
   const {
     status,
@@ -397,6 +535,7 @@ function App() {
     running,
     tools: running_,
     catalog,
+    subagents,
     queued,
     retry,
     error,
@@ -404,6 +543,7 @@ function App() {
     abort
   } = usePiSession(session);
   const runningTools = running_.map((tool) => tool.name);
+  const activeSubagentsCount = subagents.filter((s) => s.status === "running").length;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -430,8 +570,8 @@ function App() {
   return (
     <div
       className={`grid h-dvh overflow-hidden studio-ambient text-kumo-default ${
-        toolsOpen
-          ? "lg:grid-cols-[minmax(520px,1fr)_minmax(300px,24vw)]"
+        sidebarOpen
+          ? "lg:grid-cols-[minmax(520px,1fr)_minmax(320px,26vw)]"
           : "grid-cols-1"
       }`}
     >
@@ -466,9 +606,38 @@ function App() {
               <Button
                 variant="ghost"
                 shape="square"
+                aria-label="Swarm Subagents"
+                aria-expanded={sidebarOpen && sidebarTab === "subagents"}
+                onClick={() => {
+                  if (sidebarOpen && sidebarTab === "subagents") {
+                    setSidebarOpen(false);
+                  } else {
+                    setSidebarTab("subagents");
+                    setSidebarOpen(true);
+                  }
+                }}
+                icon={
+                  <div className="relative">
+                    <UsersIcon size={16} />
+                    {activeSubagentsCount > 0 ? (
+                      <span className="absolute -top-1 -right-1 size-2 rounded-full bg-emerald-400 animate-pulse" />
+                    ) : null}
+                  </div>
+                }
+              />
+              <Button
+                variant="ghost"
+                shape="square"
                 aria-label="Tools"
-                aria-expanded={toolsOpen}
-                onClick={() => setToolsOpen((open) => !open)}
+                aria-expanded={sidebarOpen && sidebarTab === "tools"}
+                onClick={() => {
+                  if (sidebarOpen && sidebarTab === "tools") {
+                    setSidebarOpen(false);
+                  } else {
+                    setSidebarTab("tools");
+                    setSidebarOpen(true);
+                  }
+                }}
                 icon={<WrenchIcon size={16} />}
               />
               <Button
@@ -491,10 +660,10 @@ function App() {
                   <InfinityIcon size={38} weight="bold" />
                 </div>
                 <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-kumo-strong">
-                  Otto
+                  Otto Swarm
                 </h2>
                 <p className="mx-auto mt-2 max-w-md text-sm text-kumo-subtle leading-relaxed">
-                  Autonomous engineering assistant for workspace execution, git workflows, and testing.
+                  Autonomous multi-agent engineering swarm. Orchestrates specialist subagents (Explorer, Coder, Reviewer) to inspect, solve, and audit changes.
                 </p>
                 <div className="mt-8 grid gap-3 sm:grid-cols-3 text-left">
                   {SUGGESTIONS.map((suggestion) => (
@@ -650,11 +819,14 @@ function App() {
         </div>
       </section>
 
-      {toolsOpen ? (
+      {sidebarOpen ? (
         <Sidebar
+          tab={sidebarTab}
+          setTab={setSidebarTab}
           tools={catalog}
           activeTools={runningTools}
-          onClose={() => setToolsOpen(false)}
+          subagents={subagents}
+          onClose={() => setSidebarOpen(false)}
         />
       ) : null}
     </div>

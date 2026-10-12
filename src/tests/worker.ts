@@ -33,6 +33,8 @@ import { EMPTY_VIEW, reduceEvents } from "../view";
 import { ASSERT_MODULE, createWorkspaceTools, JAVASCRIPT_BACKEND } from "../workspace";
 import { createGitTools } from "../git-tools";
 import { createGitHubTools } from "../github-tools";
+import { createDelegateTaskTool, SubagentTracker } from "../agents/orchestrator";
+import { type AgentRole, getRoleDefinition, filterToolsForRole } from "../agents/roles";
 
 const RELEASE_KEY = "test:gate:release";
 const GATE_RUNS_KEY = "test:gate:runs";
@@ -49,15 +51,176 @@ function textOf(content: Message["content"] | undefined): string {
 
 /**
  * The faux model's script, derived from the transcript alone so it gives
- * the same answer after an eviction as before it:
- *
- * - `multiply N` calls `multiply`, `gate` calls `gate`, `gate-unsafe` calls
- *   `gate_unsafe`; anything else is echoed back.
- * - After a tool result it answers `tool said: <result>`.
+ * the same answer after an eviction as before it.
  */
 function script(context: TranscriptContext): AssistantMessage {
   const nonSystem = context.messages.filter((m) => m.role !== "system");
   const last = nonSystem.at(-1);
+
+  // Multi-Agent Swarm: Failing sorting algorithm scenario
+  const hasSortPrompt = context.messages.some(
+    (m) =>
+      m.role === "user" &&
+      (textOf(m.content).includes("failing sorting algorithm in /workspace/sort.js") ||
+        textOf(m.content).includes("sorting algorithm in `/workspace/sort.js`"))
+  );
+  if (hasSortPrompt) {
+    const delegateResults = context.messages.filter(
+      (m) => m.role === "toolResult"
+    );
+    if (last?.role === "toolResult") {
+      if (delegateResults.length === 1) {
+        return fauxAssistantMessage(
+          [
+            fauxToolCall("delegate_task", {
+              role: "coder",
+              task: "Fix the comparator bug in /workspace/sort.js and add unit tests",
+              context: "Bug found in /workspace/sort.js line 4"
+            })
+          ],
+          { stopReason: "toolUse" }
+        );
+      } else if (delegateResults.length === 2) {
+        return fauxAssistantMessage(
+          [
+            fauxToolCall("delegate_task", {
+              role: "reviewer",
+              task: "Audit git diff in /workspace and verify test passes and blast radius",
+              context: "sort.js and sort.test.js modified"
+            })
+          ],
+          { stopReason: "toolUse" }
+        );
+      } else if (delegateResults.length === 3) {
+        return fauxAssistantMessage([
+          fauxText(
+            "Multi-agent swarm resolution complete: Explorer located the comparator bug, Coder implemented fix and unit tests, and Reviewer audited diff with approval: true. Sorting algorithm is verified and working."
+          )
+        ]);
+      }
+    } else {
+      return fauxAssistantMessage(
+        [
+          fauxToolCall("delegate_task", {
+            role: "explorer",
+            task: "Locate the bug in /workspace/sort.js"
+          })
+        ],
+        { stopReason: "toolUse" }
+      );
+    }
+  }
+
+  // Subagent: Explorer task for sort.js
+  const hasExplorerSortPrompt = context.messages.some(
+    (m) =>
+      m.role === "user" &&
+      textOf(m.content).includes("Locate the bug in /workspace/sort.js")
+  );
+  if (hasExplorerSortPrompt) {
+    if (last?.role === "toolResult") {
+      return fauxAssistantMessage([
+        fauxText(
+          "Bug located in /workspace/sort.js on line 4: incorrect comparator returning b - a instead of a - b."
+        )
+      ]);
+    } else {
+      return fauxAssistantMessage(
+        [fauxToolCall("read", { path: "/workspace/sort.js" })],
+        { stopReason: "toolUse" }
+      );
+    }
+  }
+
+  // Subagent: Coder task for sort.js
+  const hasCoderSortPrompt = context.messages.some(
+    (m) =>
+      m.role === "user" &&
+      textOf(m.content).includes("Fix the comparator bug in /workspace/sort.js")
+  );
+  if (hasCoderSortPrompt) {
+    const coderToolResults = context.messages.filter(
+      (m) => m.role === "toolResult"
+    );
+    if (last?.role === "toolResult") {
+      if (coderToolResults.length === 1) {
+        return fauxAssistantMessage(
+          [
+            fauxToolCall("write", {
+              path: "/workspace/sort.test.js",
+              content:
+                "import { sortArray } from '/workspace/sort.js'; import assert from 'node:assert'; assert.deepStrictEqual(sortArray([3,1,2]), [1,2,3]); console.log('tests passed');"
+            })
+          ],
+          { stopReason: "toolUse" }
+        );
+      } else if (coderToolResults.length === 2) {
+        return fauxAssistantMessage(
+          [
+            fauxToolCall("exec", {
+              command:
+                "import { sortArray } from '/workspace/sort.js'; import assert from 'node:assert'; assert.deepStrictEqual(sortArray([3,1,2]), [1,2,3]); console.log('tests passed');"
+            })
+          ],
+          { stopReason: "toolUse" }
+        );
+      } else if (coderToolResults.length === 3) {
+        return fauxAssistantMessage([
+          fauxText(
+            "Fixed sorting bug in /workspace/sort.js and verified unit tests pass 100%."
+          )
+        ]);
+      }
+    } else {
+      return fauxAssistantMessage(
+        [
+          fauxToolCall("write", {
+            path: "/workspace/sort.js",
+            content:
+              "export function sortArray(arr) { return [...arr].sort((a, b) => a - b); }"
+          })
+        ],
+        { stopReason: "toolUse" }
+      );
+    }
+  }
+
+  // Subagent: Reviewer task for sort.js
+  const hasReviewerSortPrompt = context.messages.some(
+    (m) =>
+      m.role === "user" &&
+      textOf(m.content).includes("Audit git diff in /workspace")
+  );
+  if (hasReviewerSortPrompt) {
+    if (last?.role === "toolResult") {
+      return fauxAssistantMessage([
+        fauxText(
+          "Audit complete: Diff is surgical and confined to sort.js and sort.test.js. Unit tests pass with zero regressions. approval: true"
+        )
+      ]);
+    } else {
+      return fauxAssistantMessage(
+        [fauxToolCall("git_diff", { dir: "/workspace" })],
+        { stopReason: "toolUse" }
+      );
+    }
+  }
+
+  // Subagent / Coder: Infinite loop / circular problem simulation
+  const hasLoopPrompt = context.messages.some(
+    (m) =>
+      m.role === "user" &&
+      (textOf(m.content).includes("circular problem") ||
+        textOf(m.content).includes("while(true)") ||
+        textOf(m.content).includes("infinite-loop"))
+  );
+  if (hasLoopPrompt) {
+    // Continue executing tools without converging
+    return fauxAssistantMessage(
+      [fauxToolCall("read", { path: "/workspace/dummy.txt" })],
+      { stopReason: "toolUse" }
+    );
+  }
 
   // Self-correction loop: math.test.js
   const hasUserMathPrompt = context.messages.some(
@@ -109,13 +272,20 @@ function script(context: TranscriptContext): AssistantMessage {
 
   // Step 4: Protected branch rejection trigger
   const hasProtectedBranchPrompt = context.messages.some(
-    (m) => m.role === "user" && (textOf(m.content).includes("directly to `main`") || textOf(m.content).includes("directly to main"))
+    (m) =>
+      m.role === "user" &&
+      (textOf(m.content).includes("directly to `main`") ||
+        textOf(m.content).includes("directly to main"))
   );
   if (hasProtectedBranchPrompt) {
     if (last?.role === "toolResult") {
       const resText = textOf(last.content);
       return fauxAssistantMessage([
-        fauxText(resText.includes("GuardrailViolation") ? resText : "GuardrailViolation: Direct pushes to protected branch 'main' are disabled")
+        fauxText(
+          resText.includes("GuardrailViolation")
+            ? resText
+            : "GuardrailViolation: Direct pushes to protected branch 'main' are disabled"
+        )
       ]);
     }
   }
@@ -225,6 +395,14 @@ function script(context: TranscriptContext): AssistantMessage {
     );
   }
 
+  // Nested delegation attempt from prompt
+  if (prompt.includes("attempt nested delegation")) {
+    return fauxAssistantMessage(
+      [fauxToolCall("delegate_task", { role: "coder", task: "nested delegation" })],
+      { stopReason: "toolUse" }
+    );
+  }
+
   // Direct exec prompt
   const execMatch = /^exec:\s*([\s\S]+)$/.exec(prompt);
   if (execMatch) {
@@ -279,9 +457,26 @@ export class PiHarnessTestObject extends DurableObject<Env> {
       : []
   });
   readonly registry = createRegistry();
+  readonly tracker: SubagentTracker = new SubagentTracker(this.ctx.storage, {
+    broadcastSubagentStart: (s) => this.sockets.broadcastSubagentStart(s),
+    broadcastSubagentDone: (s) => this.sockets.broadcastSubagentDone(s)
+  });
   readonly harness = new PiHarness({
     harness: async ({ storage, context }) => {
       this.registry.install(this.#testTools());
+      const workspaceTools = createWorkspaceTools(this.workspace);
+      const gitTools = createGitTools(this.workspace, this.env);
+      const gitHubTools = createGitHubTools(this.env);
+      const allTools = [...workspaceTools, ...gitTools, ...gitHubTools];
+
+      const delegateTaskTool = createDelegateTaskTool({
+        harness: this.harness,
+        workspace: this.workspace,
+        allTools,
+        tracker: this.tracker,
+        defaultModel: this.#faux.getModel()
+      });
+
       this.registry.install({
         name: "playground",
         sections: [
@@ -292,9 +487,8 @@ export class PiHarnessTestObject extends DurableObject<Env> {
           }
         ],
         tools: [
-          ...createWorkspaceTools(this.workspace),
-          ...createGitTools(this.workspace, this.env),
-          ...createGitHubTools(this.env)
+          delegateTaskTool,
+          ...allTools
         ]
       });
       const models = createModels();
@@ -314,8 +508,13 @@ export class PiHarnessTestObject extends DurableObject<Env> {
     },
     defaults: { model: this.#faux.getModel() }
   });
-  readonly sockets = new PiSessionSockets(this.harness, this.registry, (tag) =>
-    this.ctx.getWebSockets(tag)
+  readonly sockets = new PiSessionSockets(
+    this.harness,
+    this.registry,
+    (tag) => this.ctx.getWebSockets(tag),
+    this.#faux.getModel(),
+    undefined,
+    this.tracker
   );
   readonly webSockets = new WebSockets(this.sockets.options());
   readonly lifecycle = Lifecycle.install(this)
@@ -331,7 +530,7 @@ export class PiHarnessTestObject extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.#faux.setResponses(Array.from({ length: 200 }, () => script));
+    this.#faux.setResponses(Array.from({ length: 500 }, () => script));
   }
 
   /** Prompt the root session; the result without its transcript. */
@@ -398,6 +597,40 @@ export class PiHarnessTestObject extends DurableObject<Env> {
       content: result.content ?? [],
       isError: Boolean(result.isError)
     };
+  }
+
+  async runDelegateTask(args: any, callerSessionId = "1"): Promise<{ content: any[]; isError?: boolean }> {
+    const workspaceTools = createWorkspaceTools(this.workspace);
+    const gitTools = createGitTools(this.workspace, this.env);
+    const githubTools = createGitHubTools(this.env);
+    const allTools = [...workspaceTools, ...gitTools, ...githubTools];
+
+    const delegateTaskTool = createDelegateTaskTool({
+      harness: this.harness,
+      workspace: this.workspace,
+      allTools,
+      tracker: this.tracker,
+      defaultModel: this.#faux.getModel()
+    });
+
+    const result = await delegateTaskTool.execute(
+      args,
+      { callId: "test-delegate", conversationId: callerSessionId as any } as any,
+      {} as any
+    );
+
+    return {
+      content: result.content ?? [],
+      isError: Boolean(result.isError)
+    };
+  }
+
+  async listSubagents(): Promise<any[]> {
+    return this.tracker.list();
+  }
+
+  async getSessionMessages(sessionId = "1"): Promise<any[]> {
+    return this.harness.session(sessionId).messages();
   }
 
   wait(operationId: string, session?: string): Promise<PiOperationResult> {

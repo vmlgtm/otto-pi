@@ -14,6 +14,27 @@ export type PiToolInfo = {
   readonly parameters?: unknown;
 };
 
+export type SubagentRole = "explorer" | "coder" | "reviewer";
+export type SubagentStatus =
+  | "running"
+  | "completed"
+  | "turn_limit_reached"
+  | "timed_out"
+  | "error";
+
+export type SubagentInfo = {
+  readonly sessionId: PiSessionId;
+  readonly parentSessionId: PiSessionId;
+  readonly role: SubagentRole;
+  readonly task: string;
+  readonly status: SubagentStatus;
+  readonly summary?: string;
+  readonly filesModified?: readonly string[];
+  readonly turnCount?: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+};
+
 /** Client → server. Commands with an `id` get a `result` or `error` back. */
 export type PiClientMessage =
   | {
@@ -26,7 +47,9 @@ export type PiClientMessage =
   | { readonly type: "abort"; readonly id?: string }
   | { readonly type: "reset"; readonly id?: string; readonly handoff?: string }
   /** Ask for a fresh snapshot. */
-  | { readonly type: "resync"; readonly id?: string };
+  | { readonly type: "resync"; readonly id?: string }
+  /** Query active / historical subagents for this DO. */
+  | { readonly type: "subagents:list"; readonly id?: string };
 
 /** Server → client. */
 export type PiServerMessage =
@@ -44,6 +67,21 @@ export type PiServerMessage =
       readonly type: "events";
       readonly session: PiSessionId;
       readonly events: readonly AgentEvent[];
+    }
+  | {
+      readonly type: "subagent:start";
+      readonly parentSession: PiSessionId;
+      readonly subagent: SubagentInfo;
+    }
+  | {
+      readonly type: "subagent:done";
+      readonly parentSession: PiSessionId;
+      readonly subagent: SubagentInfo;
+    }
+  | {
+      readonly type: "subagents:list";
+      readonly parentSession: PiSessionId;
+      readonly subagents: readonly SubagentInfo[];
     }
   | { readonly type: "result"; readonly id: string; readonly result: JsonValue }
   | { readonly type: "error"; readonly id?: string; readonly message: string };

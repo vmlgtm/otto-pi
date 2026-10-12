@@ -18,12 +18,13 @@ import { createGitTools } from "./git-tools";
 import { createGitHubTools } from "./github-tools";
 import { createMcpTools } from "./mcp";
 import { PiSessionSockets } from "./sockets";
+import { createDelegateTaskTool, SubagentTracker } from "./agents/orchestrator";
 import { ASSERT_MODULE, createWorkspaceTools, JAVASCRIPT_BACKEND } from "./workspace";
 
 const MODEL_ID = "@cf/qwen/qwen3.8-27b";
 
 const PREAMBLE =
-  "You are an autonomous engineering assistant. You have a durable workspace at /workspace: read, write, edit, delete, list (ls), find and grep files there, and run JavaScript modules in it with exec. You have native Git tools (git_clone, git_checkout, git_status, git_diff, git_commit, git_push), GitHub integration tools (github_get_issue, github_create_pull_request, github_add_comment), and external MCP tools. Guardrails enforce that pushes to protected branches ('main', 'master', etc.) and force pushes are disabled; all PRs default to draft, and feature branches must follow 'otto/<issue-id>-<short-description>'. Use tools whenever they can answer the request, verify changes with tests, and explain their results plainly.";
+  "You are an autonomous engineering assistant and lead architect. You coordinate specialist subagents ('explorer', 'coder', 'reviewer') via delegate_task. You have a durable workspace at /workspace: read, write, edit, delete, list (ls), find and grep files there, and run JavaScript modules in it with exec. You have native Git tools (git_clone, git_checkout, git_status, git_diff, git_commit, git_push), GitHub integration tools (github_get_issue, github_create_pull_request, github_add_comment), and external MCP tools. Guardrails enforce that pushes to protected branches ('main', 'master', etc.) and force pushes are disabled; all PRs default to draft, and feature branches must follow 'otto/<issue-id>-<short-description>'. Direct remote pushes are prohibited until the reviewer subagent has approved the changes. Use tools whenever they can answer the request, verify changes with tests, and explain their results plainly.";
 
 /**
  * Validates HMAC-SHA256 signature from GitHub webhook against secret.
@@ -86,6 +87,10 @@ export class PiAgent extends DurableObject<Env> {
       : []
   });
   readonly registry = createRegistry();
+  readonly tracker: SubagentTracker = new SubagentTracker(this.ctx.storage, {
+    broadcastSubagentStart: (subagent) => this.sockets.broadcastSubagentStart(subagent),
+    broadcastSubagentDone: (subagent) => this.sockets.broadcastSubagentDone(subagent)
+  });
   readonly harness = new PiHarness({
     harness: async ({ storage, context }) => {
       const workspaceTools = createWorkspaceTools(this.workspace);
@@ -98,10 +103,19 @@ export class PiAgent extends DurableObject<Env> {
         console.warn("Could not load MCP tools on startup:", err);
       }
 
+      const allTools = [...workspaceTools, ...gitTools, ...gitHubTools, ...mcpTools];
+      const delegateTaskTool = createDelegateTaskTool({
+        harness: this.harness,
+        workspace: this.workspace,
+        allTools,
+        tracker: this.tracker,
+        defaultModel: this.ai(MODEL_ID)
+      });
+
       this.registry.install({
         name: "playground",
         sections: [{ key: "preamble", render: () => PREAMBLE, tag: false }],
-        tools: [...workspaceTools, ...gitTools, ...gitHubTools, ...mcpTools]
+        tools: [delegateTaskTool, ...allTools]
       });
 
       const models = createModels();
@@ -128,7 +142,8 @@ export class PiAgent extends DurableObject<Env> {
     this.registry,
     (tag) => this.ctx.getWebSockets(tag),
     this.ai(MODEL_ID),
-    [this.env.GITHUB_TOKEN, this.env.GITHUB_APP_PRIVATE_KEY, this.env.GITHUB_WEBHOOK_SECRET]
+    [this.env.GITHUB_TOKEN, this.env.GITHUB_APP_PRIVATE_KEY, this.env.GITHUB_WEBHOOK_SECRET],
+    this.tracker
   );
   readonly webSockets = new WebSockets(this.sockets.options());
   readonly lifecycle = Lifecycle.install(this)
@@ -213,7 +228,7 @@ export default {
 
         if (agentNamespace) {
           const stub = agentNamespace.get(agentNamespace.idFromName(issueKey));
-          const prompt = `Triage and resolve GitHub issue #${issue.number} on ${repo?.full_name ?? "the repository"}: "${issue.title}".\n\nIssue Description:\n${issue.body ?? "No description provided."}\n\nExecution steps:\n1. Reproduce the bug or inspect the codebase in /workspace.\n2. Fix the issue in /workspace.\n3. Run tests using exec until passing.\n4. Commit changes and push feature branch otto/issue-${issue.number}-fix.\n5. Open a draft Pull Request linking this issue.`;
+          const prompt = `Triage and resolve GitHub issue #${issue.number} on ${repo?.full_name ?? "the repository"}: "${issue.title}".\n\nIssue Description:\n${issue.body ?? "No description provided."}\n\nExecution steps:\n1. Deconstruct and delegate codebase inspection to explorer specialist.\n2. Delegate bug fix and test verification to coder specialist in /workspace.\n3. Delegate blast radius and diff review to reviewer specialist.\n4. Once reviewer approves, commit changes, push feature branch otto/issue-${issue.number}-fix, and open a draft Pull Request.`;
 
           try {
             await stub.submit(prompt);
@@ -237,7 +252,7 @@ export default {
 
           if (agentNamespace) {
             const stub = agentNamespace.get(agentNamespace.idFromName(issueKey));
-            const prompt = `Autonomous instruction from issue comment on #${issue.number} (${repo?.full_name}):\n"${body}"\n\nPlease execute the requested fix, verify with tests, commit, push, and open or update a draft PR.`;
+            const prompt = `Autonomous instruction from issue comment on #${issue.number} (${repo?.full_name}):\n"${body}"\n\nPlease coordinate your swarm (explorer, coder, reviewer) to execute the requested fix, verify with tests, audit diff, commit, push, and open or update a draft PR.`;
 
             try {
               await stub.submit(prompt);

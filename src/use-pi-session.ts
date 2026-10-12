@@ -5,6 +5,7 @@ import type {
   ClientMessage,
   ServerMessage,
   SessionView,
+  SubagentInfo,
   ToolInfo
 } from "./protocol";
 
@@ -14,12 +15,15 @@ type State = SessionView & {
   readonly status: ConnectionStatus;
   /** Every registered tool, from the server's hello. */
   readonly catalog: readonly ToolInfo[];
+  /** Active and completed subagent sessions. */
+  readonly subagents: readonly SubagentInfo[];
 };
 
 const INITIAL_STATE: State = {
   ...EMPTY_VIEW,
   status: "connecting",
-  catalog: []
+  catalog: [],
+  subagents: []
 };
 
 /**
@@ -51,6 +55,39 @@ export function usePiSession(object: string) {
           setState((current) => ({
             ...current,
             ...reduceEvents(current, message.events)
+          }));
+          return;
+        case "subagent:start":
+          setState((current) => {
+            const exists = current.subagents.some(
+              (s) => s.sessionId === message.subagent.sessionId
+            );
+            return {
+              ...current,
+              subagents: exists
+                ? current.subagents.map((s) =>
+                    s.sessionId === message.subagent.sessionId
+                      ? message.subagent
+                      : s
+                  )
+                : [...current.subagents, message.subagent]
+            };
+          });
+          return;
+        case "subagent:done":
+          setState((current) => ({
+            ...current,
+            subagents: current.subagents.map((s) =>
+              s.sessionId === message.subagent.sessionId
+                ? message.subagent
+                : s
+            )
+          }));
+          return;
+        case "subagents:list":
+          setState((current) => ({
+            ...current,
+            subagents: message.subagents
           }));
           return;
         case "error":

@@ -11,7 +11,9 @@ import {
   type PiModel,
   type PiSessionId
 } from "agents/harness/pi";
-import type { PiClientMessage, PiServerMessage } from "./protocol";
+import type { PiClientMessage, PiServerMessage, SubagentInfo } from "./protocol";
+import type { SubagentEventEmitter, SubagentTracker } from "./agents/orchestrator";
+import { sanitizeValue } from "./sanitize";
 
 const SESSION_TAG_PREFIX = "pi-session:";
 const SESSION_QUERY = "session";
@@ -38,8 +40,6 @@ function sessionOf(tags: readonly string[]): string | undefined {
   return tag?.slice(SESSION_TAG_PREFIX.length);
 }
 
-import { sanitizeValue } from "./sanitize";
-
 function send(
   socket: WebSocket,
   message: PiServerMessage,
@@ -65,13 +65,14 @@ function send(
  * `reattach()` from its `onStart` to give sockets that outlived the last
  * isolate a new watch and a fresh snapshot.
  */
-export class PiSessionSockets {
+export class PiSessionSockets implements SubagentEventEmitter {
   readonly #harness: PiHarness;
   readonly #registry: RegistryReader;
   readonly #getWebSockets: (tag?: string) => WebSocket[];
   readonly #watches = new Map<WebSocket, AgentEventStream>();
   readonly #model?: PiModel;
   readonly #secrets?: readonly (string | undefined)[];
+  readonly #tracker?: SubagentTracker;
 
   constructor(
     harness: PiHarness,
@@ -79,17 +80,43 @@ export class PiSessionSockets {
     registry: RegistryReader,
     getWebSockets: (tag?: string) => WebSocket[],
     model?: PiModel,
-    secrets?: readonly (string | undefined)[]
+    secrets?: readonly (string | undefined)[],
+    tracker?: SubagentTracker
   ) {
     this.#harness = harness;
     this.#registry = registry;
     this.#getWebSockets = getWebSockets;
     this.#model = model;
     this.#secrets = secrets;
+    this.#tracker = tracker;
   }
 
   #send(socket: WebSocket, message: PiServerMessage): void {
     send(socket, message, this.#secrets);
+  }
+
+  broadcastSubagentStart(subagent: SubagentInfo): void {
+    const parentTag = sessionTag(subagent.parentSessionId);
+    const message: PiServerMessage = {
+      type: "subagent:start",
+      parentSession: subagent.parentSessionId,
+      subagent
+    };
+    for (const socket of this.#getWebSockets(parentTag)) {
+      this.#send(socket, message);
+    }
+  }
+
+  broadcastSubagentDone(subagent: SubagentInfo): void {
+    const parentTag = sessionTag(subagent.parentSessionId);
+    const message: PiServerMessage = {
+      type: "subagent:done",
+      parentSession: subagent.parentSessionId,
+      subagent
+    };
+    for (const socket of this.#getWebSockets(parentTag)) {
+      this.#send(socket, message);
+    }
   }
 
   options(): WebSocketsOptions {
@@ -146,6 +173,22 @@ export class PiSessionSockets {
           parameters: tool.parameters
         }))
     });
+
+    if (this.#tracker) {
+      try {
+        const subagents = await this.#tracker.list(session);
+        if (subagents.length > 0) {
+          this.#send(connection, {
+            type: "subagents:list",
+            parentSession: session,
+            subagents
+          });
+        }
+      } catch (err) {
+        console.warn("Could not send subagents list on connect:", err);
+      }
+    }
+
     await this.#watch(connection, session);
   }
 
@@ -221,6 +264,17 @@ export class PiSessionSockets {
       case "resync":
         await this.#watch(connection, session);
         return null;
+      case "subagents:list":
+        if (this.#tracker) {
+          const subagents = await this.#tracker.list(session);
+          this.#send(connection, {
+            type: "subagents:list",
+            parentSession: session,
+            subagents
+          });
+          return subagents as any;
+        }
+        return [];
       default:
         throw new Error(
           `Unknown pi message type ${JSON.stringify((message as { type: string }).type)}`
