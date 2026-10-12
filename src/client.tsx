@@ -695,11 +695,8 @@ function App() {
                   <InfinityIcon size={38} weight="bold" />
                 </div>
                 <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-kumo-strong">
-                  Otto Swarm
+                  Otto
                 </h2>
-                <p className="mx-auto mt-2 max-w-md text-sm text-kumo-subtle leading-relaxed">
-                  Autonomous multi-agent engineering swarm. Orchestrates specialist subagents (Explorer, Coder, Reviewer) to inspect, solve, and audit changes.
-                </p>
                 <div className="mt-8 grid gap-3 sm:grid-cols-3 text-left">
                   {SUGGESTIONS.map((suggestion) => (
                     <button
