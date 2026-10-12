@@ -10,7 +10,7 @@ import { Lifecycle } from "agents/lifecycle";
 import { createAI } from "agents/models/pi-ai";
 import { WebSockets } from "agents/websockets";
 import { PiSessionSockets } from "./sockets";
-import { createWorkspaceTools, JAVASCRIPT_BACKEND } from "./workspace";
+import { ASSERT_MODULE, createWorkspaceTools, JAVASCRIPT_BACKEND } from "./workspace";
 
 const MODEL_ID = "@cf/qwen/qwen3.8-27b";
 
@@ -35,7 +35,14 @@ export class PiAgent extends DurableObject<Env> {
             loader: this.env.LOADER,
             root: "/workspace",
             access: "read-write",
-            allowGitNetwork: true
+            allowGitNetwork: false,
+            defaultTimeoutMs: 15_000,
+            maxTimeoutMs: 30_000,
+            egress: { mode: "none" },
+            modules: {
+              "node:assert": ASSERT_MODULE,
+              assert: ASSERT_MODULE
+            }
           })
         ]
       : []
@@ -83,6 +90,9 @@ export class PiAgent extends DurableObject<Env> {
 
   /** Host startup, after the harness has opened pi. */
   async onStart(): Promise<void> {
+    try {
+      await this.workspace.fs.mkdir("/workspace", { recursive: true });
+    } catch {}
     await this.sockets.reattach();
     try {
       await this.harness.session().setModel(this.ai(MODEL_ID));

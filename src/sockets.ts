@@ -126,7 +126,11 @@ export class PiSessionSockets {
       tools: this.#registry
         .snapshot()
         .tools()
-        .map(({ tool }) => ({ name: tool.name, description: tool.description }))
+        .map(({ tool }) => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters
+        }))
     });
     await this.#watch(connection, session);
   }

@@ -11,6 +11,7 @@ import type { PiSessionId, PiWhenBusy } from "agents/harness/pi";
 export type PiToolInfo = {
   readonly name: string;
   readonly description: string;
+  readonly parameters?: unknown;
 };
 
 /** Client → server. Commands with an `id` get a `result` or `error` back. */
