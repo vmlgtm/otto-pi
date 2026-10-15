@@ -19,9 +19,11 @@ import { createGitHubTools } from "./github-tools";
 import { createMcpTools } from "./mcp";
 import { PiSessionSockets } from "./sockets";
 import { createDelegateTaskTool, SubagentTracker } from "./agents/orchestrator";
-import { ASSERT_MODULE, createWorkspaceTools, JAVASCRIPT_BACKEND } from "./workspace";
+import { ASSERT_MODULE, JAVASCRIPT_BACKEND } from "./workspace";
 import { interruptLogExtension } from "./interrupted";
 import { Sandbox } from "./sandbox";
+import { ContainerEnv } from "./container-env";
+import { createCodingTools, createSandboxTools, createSearchTools } from "./container-tools";
 
 export { OttoEgress } from "./egress";
 
@@ -104,7 +106,11 @@ export class PiAgent extends DurableObject<Env> {
   });
   readonly harness = new PiHarness({
     harness: async ({ storage, context }) => {
-      const workspaceTools = createWorkspaceTools(this.workspace);
+      const workspaceTools = [
+        ...createCodingTools(this.sandbox),
+        ...createSearchTools(this.sandbox),
+        ...createSandboxTools(this.sandbox)
+      ];
       const gitTools = createGitTools(this.workspace, this.env);
       const gitHubTools = createGitHubTools(this.env);
       let mcpTools: any[] = [];
@@ -137,6 +143,12 @@ export class PiAgent extends DurableObject<Env> {
         {
           models,
           registry: this.registry,
+          // pi's read, write, edit and bash run on the session's container.
+          env: async (target) =>
+            new ContainerEnv(this.sandbox, {
+              id: `container:${this.ctx.id.toString()}`,
+              cwd: target.cwd ?? (await this.sandbox.cwd())
+            }),
           settings: {
             retry: { enabled: true, maxRetries: 5, baseDelayMs: 1000 }
           },
@@ -193,6 +205,8 @@ export class PiAgent extends DurableObject<Env> {
       case "stop":
         await this.sandbox.stop();
         return { running: this.ctx.container?.running ?? false };
+      case "conformance":
+        return (await import("./dev-conformance")).runConformance(this.sandbox, arg || undefined);
       case "abort":
         this.ctx.abort("dev: simulated reset");
         return null;
@@ -222,6 +236,11 @@ export default {
     if (url.pathname === "/api/session") {
       // A fresh session id for the client to open its WebSocket against.
       return Response.json({ session: crypto.randomUUID() });
+    }
+
+    if (url.pathname === "/api/dev/conformance" && request.method === "POST" && env.DEV_ROUTES === "1") {
+      const stub = env.PiAgent.get(env.PiAgent.idFromName(url.searchParams.get("name") ?? "conformance"));
+      return Response.json(await stub.devSandbox("conformance", url.searchParams.get("filter") ?? ""));
     }
 
     if (url.pathname === "/api/dev/sandbox" && env.DEV_ROUTES === "1") {

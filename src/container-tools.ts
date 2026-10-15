@@ -1,7 +1,24 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
+import {
+  createBashTool,
+  createEditTool,
+  createReadTool,
+  createWriteTool
+} from "@earendil-works/pi-durable/tools";
 import { REPOS } from "./repos";
-import { commandEnv, type RunResult, type Sandbox } from "./sandbox";
+import { commandEnv, MAX_COMMAND_SECONDS, type RunResult, type Sandbox } from "./sandbox";
+
+/** Credentials a command could look for. None is set in the container; this keeps it that way. */
+const CREDENTIAL_VARIABLES = [
+  "GITHUB_TOKEN",
+  "GH_TOKEN",
+  "GIT_TOKEN",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_WEBHOOK_SECRET",
+  "NPM_TOKEN",
+  "NODE_AUTH_TOKEN"
+];
 
 /** Output cap for the tools in this file, as for every other tool. */
 export const MAX_OUTPUT_BYTES = 50 * 1024;
@@ -120,4 +137,122 @@ export function createSandboxTools(sandbox: Sandbox): ToolRegistration[] {
   };
 
   return [prepare, checks];
+}
+
+/**
+ * pi's `read`, `write`, `edit` and `bash`, which run on the conversation's
+ * `ExecutionEnv` (ContainerEnv). pi owns how they behave; this sets their
+ * replay policy and the shell's limits.
+ */
+export function createCodingTools(sandbox: Sandbox): ToolRegistration[] {
+  const bash = createBashTool({
+    // Runs before every command: no credentials, and the repo's Node first on PATH.
+    async prepare(execution) {
+      for (const name of Object.keys(execution.env)) {
+        if (/token|secret|password|private_key|credential/i.test(name)) delete execution.env[name];
+      }
+      for (const name of CREDENTIAL_VARIABLES) execution.env[name] = "";
+      execution.env.GIT_TERMINAL_PROMPT = "0";
+      Object.assign(execution.env, commandEnv((await sandbox.workspace())?.node));
+    }
+  });
+  return [
+    // Reads have no effect and `write` replaces the whole file, so both may rerun after a reset.
+    { ...createReadTool(), replay: "safe" },
+    { ...createWriteTool(), replay: "safe" },
+    createEditTool(),
+    {
+      ...bash,
+      description: `${bash.description} Runs in the prepared repository on a Linux container with Node, git, npm, pnpm and yarn. Internet is off: use prepare_workspace to install dependencies. Commands stop after ${MAX_COMMAND_SECONDS} seconds at most.`,
+      // The environment caps every command at 600 s; say so in the arguments, so a
+      // timeout reports the limit that applied.
+      prepareArguments(args: unknown) {
+        const input = (args ?? {}) as { command?: unknown; timeout?: unknown };
+        const timeout = typeof input.timeout === "number" && input.timeout > 0 ? input.timeout : MAX_COMMAND_SECONDS;
+        return { ...input, timeout: Math.min(timeout, MAX_COMMAND_SECONDS) } as { command: string; timeout?: number };
+      }
+    }
+  ] as ToolRegistration[];
+}
+
+const lsParameters = Type.Object({
+  path: Type.Optional(Type.String({ description: "Directory to list (default: the repository root)" }))
+});
+
+const findParameters = Type.Object({
+  path: Type.Optional(Type.String({ description: "Directory to search (default: the repository root)" })),
+  name: Type.Optional(Type.String({ description: "File name glob, e.g. '*.test.ts'" })),
+  type: Type.Optional(Type.Union([Type.Literal("f"), Type.Literal("d")], { description: "f: files, d: directories" })),
+  maxDepth: Type.Optional(Type.Number({ description: "Maximum directory depth (default 8)" }))
+});
+
+const grepParameters = Type.Object({
+  pattern: Type.String({ description: "Pattern to search for (basic regex unless fixed is true)" }),
+  path: Type.Optional(Type.String({ description: "File or directory to search (default: the repository root)" })),
+  include: Type.Optional(Type.String({ description: "Only files matching this glob, e.g. '*.ts'" })),
+  ignoreCase: Type.Optional(Type.Boolean()),
+  fixed: Type.Optional(Type.Boolean({ description: "Treat the pattern as a fixed string" }))
+});
+
+/** Directories no search descends into. */
+const SKIPPED = ["node_modules", ".git"];
+
+/**
+ * `ls`, `find` and `grep` for the Explorer, which must search without a
+ * shell. Each runs a fixed argv (never shell text), read-only, with its
+ * output cut at 50 KB.
+ */
+export function createSearchTools(sandbox: Sandbox): ToolRegistration[] {
+  const run = async (argv: string[], okCodes: readonly number[]) => {
+    try {
+      const result = await sandbox.run(argv, { cwd: await sandbox.cwd(), timeoutSeconds: 60 });
+      const failed = !okCodes.includes(result.exitCode);
+      const text = failed ? result.stderr || result.stdout || `exit ${result.exitCode}` : result.stdout || "(no matches)";
+      return { content: [{ type: "text" as const, text: head(text) }], isError: failed };
+    } catch (error) {
+      return failure(error);
+    }
+  };
+
+  const ls: ToolRegistration<typeof lsParameters> = {
+    name: "ls",
+    description: "List a directory's entries with sizes and types.",
+    parameters: lsParameters,
+    replay: "safe",
+    execute: (args) => run(["ls", "-la", "--", args.path ?? "."], [0])
+  };
+
+  const find: ToolRegistration<typeof findParameters> = {
+    name: "find",
+    description: "Find files or directories by name under a path, skipping node_modules and .git.",
+    parameters: findParameters,
+    replay: "safe",
+    execute: (args) => {
+      const depth = Math.max(1, Math.min(Math.floor(args.maxDepth ?? 8), 32));
+      const argv = ["find", args.path ?? ".", "-maxdepth", String(depth)];
+      for (const dir of SKIPPED) argv.push("-name", dir, "-prune", "-o");
+      if (args.type) argv.push("-type", args.type);
+      if (args.name) argv.push("-name", args.name);
+      argv.push("-print");
+      return run(argv, [0]);
+    }
+  };
+
+  const grep: ToolRegistration<typeof grepParameters> = {
+    name: "grep",
+    description: "Search file contents recursively and print matching lines with file and line number, skipping node_modules and .git.",
+    parameters: grepParameters,
+    replay: "safe",
+    execute: (args) => {
+      const argv = ["grep", "-rnI", ...SKIPPED.map((dir) => `--exclude-dir=${dir}`)];
+      if (args.ignoreCase) argv.push("-i");
+      if (args.fixed) argv.push("-F");
+      if (args.include) argv.push(`--include=${args.include}`);
+      argv.push("--", args.pattern, args.path ?? ".");
+      // grep exits 1 when nothing matched; that is an answer, not a failure.
+      return run(argv, [0, 1]);
+    }
+  };
+
+  return [ls, find, grep];
 }

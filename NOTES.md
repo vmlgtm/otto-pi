@@ -415,3 +415,37 @@ writes interrupted results without `afterTool`, and hooks cannot read
 entries, so the hook reads the round's results through the harness after
 it returns. `src/tests/interrupted.test.ts` covers it: an unsafe tool,
 `abortAllDurableObjects()`, then the wake alarm.
+
+### ExecutionEnv, not Files: how pi's tools reach the container
+
+`read`, `write`, `edit` and `bash` are pi's own (`createReadTool` and the
+others), running on `ContainerEnv` (`src/container-env.ts`), which
+`HarnessOptions.env` builds per use with the prepared repo as `cwd`. pi
+keeps how the tools behave (edit matching, output limits, spill files);
+we keep only the mapping. `@cloudflare/sandbox`'s `Files` covers about a
+third of `FileSystem`, and none of its stateful parts, so every
+filesystem method goes through one helper in the image instead:
+`container/otto-fs.mjs`, one Node process per call, JSON in and out.
+
+- Readers keep their cursor on the host. A binary reader reads a hard link
+  in `/var/tmp/otto-readers`, so a rename does not change what it reads.
+  `scanLines` and the text-line reader reuse pi's own `LineScanner` and
+  `StreamDecoder` on the host, fed by positional reads.
+- `watch` polls every 250 ms (`mode: "polling"`), comparing
+  `kind:size:mtimeNs:ino` fingerprints. No conformance case was dropped.
+- `exec` runs `env … timeout -k 5 <s> <argv>`. GNU `timeout` puts the
+  command in its own process group and kills the whole group (test runners
+  fork), and aborting sends TERM to `timeout`, which forwards it. The
+  limit is 600 s whatever the caller asks for. A pre-check exec turns a
+  missing cwd or program into `spawn_error`. Output streams per chunk; the
+  `window` hint is ignored (allowed: every chunk is delivered); the spill
+  file is written from memory (up to 32 MB) after the command ends.
+- `bash` gets `prepareArguments` that clamp its timeout to 600 s, so
+  "Command timed out after N seconds" names the limit that applied, and a
+  `prepare` that blanks credential variables and puts Node 22 first on
+  PATH for repos that need it.
+
+`POST /api/dev/conformance` (DEV_ROUTES) runs `createEnvConformance()`
+against the real container: 24 of 24 cases pass, watch cases included.
+Each file operation costs one exec, about 0.2–0.5 s locally under Podman,
+mostly Node start-up.

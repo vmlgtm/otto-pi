@@ -31,6 +31,8 @@ ENV GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt \
   COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
   CI=1
 
+# File operations for ContainerEnv: one Node process per call (src/container-env.ts).
+COPY container/otto-fs.mjs /usr/local/lib/otto/otto-fs.mjs
 COPY container/entrypoint.sh /usr/local/bin/otto-entrypoint
 RUN chmod +x /usr/local/bin/otto-entrypoint && mkdir -p /workspace
 WORKDIR /workspace

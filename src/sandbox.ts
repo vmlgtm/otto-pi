@@ -295,6 +295,12 @@ export class Sandbox extends LifecycleCapability {
     if (container?.running) await container.destroy().catch(() => {});
   }
 
+  /** Start `argv` in the container, for callers that stream its output. */
+  async spawn(argv: readonly string[], options: ContainerExecOptions = {}): Promise<ExecProcess> {
+    const container = await this.container();
+    return container.exec([...argv], options);
+  }
+
   /**
    * Run `argv` without a shell, in `cwd`, killed with its process group after
    * `timeoutSeconds` (capped at 600). Output is buffered, keeping the tail.
