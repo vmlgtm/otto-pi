@@ -1,0 +1,40 @@
+src/tests/sandbox.test.ts
+  s_f1c9cde74215b2::t_ac547cea0c3bf3 1-199
+src/repos.ts
+  s_f1c9cde74215b2::t_cb04806955e6a0 32-33
+  s_f1c9cde74215b2::t_9ec290b459e5a7 1-31,34-63
+env.d.ts
+  s_f1c9cde74215b2::t_147216ad6a627a 13-14
+src/server.ts
+  s_f1c9cde74215b2::t_147216ad6a627a 24,93-99,163
+  s_f1c9cde74215b2::t_3251245f7e1ba1 184-200,227-235
+container/entrypoint.sh
+  s_f1c9cde74215b2::t_3251245f7e1ba1 2-3
+scripts/dev-podman.sh
+  s_f1c9cde74215b2::t_018b4d657558e6 1-14
+src/sandbox.ts
+  s_f1c9cde74215b2::t_e6b5fc7e84b954 1-449,451-524
+  s_f1c9cde74215b2::t_b56611c4ebb98a 450
+src/container-tools.ts
+  s_f1c9cde74215b2::t_1c1ff0e6580c79 1-123
+src/tests/fake-container.ts
+  s_f1c9cde74215b2::t_ddbc6d8aaefdf0 1-133
+NOTES.md
+  s_f1c9cde74215b2::t_12e3fc45a45cdb 337-345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1d08af7e2aedd5035ac9b4f6e4a0205bd6182d35",
+  "prompts": {},
+  "sessions": {
+    "s_f1c9cde74215b2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c8eb39b-9676-46eb-ae80-a98e22161edb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Vaibhav Misra <vaibhav.misra@1mg.com>"
+    }
+  }
+}
