@@ -6,3 +6,5 @@ dist/
 .env
 .env.*
 pnpm-debug.log*
+.reviews/
+.dev.vars
