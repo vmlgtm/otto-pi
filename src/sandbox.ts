@@ -210,13 +210,14 @@ export class Sandbox extends LifecycleCapability {
     }
 
     const size = instance ?? state?.instance ?? "standard-1";
+    // Intercepts first, so the container starts with HTTPS interception (and its CA) in place.
+    await this.#lock(container, state);
     container.start(
       snapshot
         ? { containerSnapshot: { id: snapshot.id }, enableInternet: false, instance: size }
         : { image: container.images.workspace, enableInternet: false, instance: size }
     );
     this.#instance = size;
-    await this.#lock(container, state);
     await this.#waitReady(container);
     await this.#trustCa(container);
     await container.setInactivityTimeout(IDLE_STOP_MS + 5 * 60_000).catch(() => {});
@@ -256,15 +257,24 @@ export class Sandbox extends LifecycleCapability {
     throw new Error("The workspace container did not become ready within 60 s.");
   }
 
-  /** The egress CA exists only once the container runs; add it to the system bundle. */
+  /**
+   * Add the egress CA to the system bundle. It is placed after the container
+   * starts, so wait up to 20 s for it; if it never comes, log what is there.
+   */
   async #trustCa(container: ContainerLike): Promise<void> {
     const process = await container.exec([
       "sh",
       "-c",
-      'test -f "$CF_CA" && cat "$CF_CA" >> /etc/ssl/certs/ca-certificates.crt'
+      'for i in $(seq 1 40); do [ -s "$CF_CA" ] && break; sleep 0.5; done; ' +
+        'if [ -s "$CF_CA" ]; then cat "$CF_CA" >> /etc/ssl/certs/ca-certificates.crt; ' +
+        'else ls -la /etc/cloudflare /etc/cloudflare/certs 2>&1; exit 3; fi'
     ]);
-    if ((await process.exitCode) !== 0) {
-      console.warn(JSON.stringify({ event: "container_ca_missing" }));
+    const [stdout, exitCode] = await Promise.all([collect(process.stdout), process.exitCode]);
+    if (exitCode !== 0) {
+      console.warn(JSON.stringify({ event: "container_ca_missing", listing: stdout.slice(0, 1000) }));
+      throw new Error(
+        "The workspace container has no egress CA certificate, so HTTPS from it cannot be verified. Try prepare_workspace again."
+      );
     }
   }
 
