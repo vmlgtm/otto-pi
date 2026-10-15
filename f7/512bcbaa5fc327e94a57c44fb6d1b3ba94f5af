@@ -1,0 +1,20 @@
+src/sandbox.ts
+  s_f1c9cde74215b2::t_8f19c54eb5d731 170-171,241,292-295,297-298,302-305,314-322,326,328,354,461,496,581,599
+  s_f1c9cde74215b2::t_5b021a750e4da2 172-173,242,252-253,323-325
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f7512bcbaa5fc327e94a57c44fb6d1b3ba94f5af",
+  "prompts": {},
+  "sessions": {
+    "s_f1c9cde74215b2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c8eb39b-9676-46eb-ae80-a98e22161edb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Vaibhav Misra <vaibhav.misra@1mg.com>"
+    }
+  }
+}
