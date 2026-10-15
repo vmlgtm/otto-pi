@@ -1,0 +1,39 @@
+src/tests/container-tools.test.ts
+  s_f1c9cde74215b2::t_f0aea94ab2f4db 1-158
+NOTES.md
+  s_f1c9cde74215b2::t_5ee3457b07653d 418-451
+src/server.ts
+  s_f1c9cde74215b2::t_5d972fa5baeb30 209
+  s_f1c9cde74215b2::t_238d2ad0b72c33 208,241-243
+  s_f1c9cde74215b2::t_c7088ee3f93485 22,25-26,109-113,146-151
+  s_f1c9cde74215b2::t_d8a7066a21a385 244-245
+container/otto-fs.mjs
+  s_f1c9cde74215b2::t_d9052e00fcb790 1-238
+src/sandbox.ts
+  s_f1c9cde74215b2::t_a2db2ca3cd52aa 298-303
+Dockerfile
+  s_f1c9cde74215b2::t_a2db2ca3cd52aa 34-35
+src/container-tools.ts
+  s_f1c9cde74215b2::t_b5e842189e479b 3-8,10-21,141-258
+src/dev-conformance.ts
+  s_f1c9cde74215b2::t_d82ea63e5f5477 1-87
+src/container-env.ts
+  s_f1c9cde74215b2::t_b115602cad69c6 1,3-234,236-296,300,302-496,498-508,510-712
+  s_f1c9cde74215b2::t_19c3f42f44a3c9 2,235,297-299,301,497,509
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6042fe636b44c4b731189c2419fd8e0032b73c02",
+  "prompts": {},
+  "sessions": {
+    "s_f1c9cde74215b2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c8eb39b-9676-46eb-ae80-a98e22161edb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Vaibhav Misra <vaibhav.misra@1mg.com>"
+    }
+  }
+}
