@@ -1,411 +1,252 @@
-import type { Workspace } from "@cloudflare/computer";
 import { Type } from "@earendil-works/pi-ai";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
+import { posix } from "node:path";
+import { head } from "./container-tools";
+import { type RunResult, type Sandbox, WORKSPACE_ROOT } from "./sandbox";
 
 const PROTECTED_BRANCHES = new Set(["main", "master", "release", "production"]);
 const OTTO_BRANCH_REGEX = /^otto\/[a-zA-Z0-9_.-]+$/;
+const BOT_NAME = "otto-pi[bot]";
+const BOT_EMAIL = "otto-pi[bot]@users.noreply.github.com";
 
-function normalizeDir(dir?: string): string {
-  if (!dir) return "/workspace";
-  const trimmed = dir.trim();
-  if (trimmed === "/" || !trimmed.startsWith("/workspace")) {
-    return "/workspace";
-  }
-  return trimmed;
+type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+
+function text(value: string, isError = false): ToolResult {
+  return { content: [{ type: "text", text: value }], ...(isError ? { isError } : {}) };
 }
 
-function extractRepoName(url: string): string {
-  try {
-    const parts = url.split("/").filter(Boolean);
-    const last = parts.at(-1)?.replace(/\.git$/, "");
-    return last || "repo";
-  } catch {
-    return "repo";
-  }
+function errorResult(error: unknown): ToolResult {
+  return text(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }), true);
 }
 
-function getGitAuthHeader(token?: string): Record<string, string> {
-  if (!token) return {};
-  // GitHub Git Smart HTTP transport requires HTTP Basic auth
-  const encoded = btoa(`x-access-token:${token}`);
-  return { Authorization: `Basic ${encoded}` };
+function guardrail(message: string): ToolResult {
+  return text(`GuardrailViolation: ${message}`, true);
 }
 
-export function createGitTools(
-  workspace: Workspace,
-  env?: { GITHUB_TOKEN?: string }
-): ToolRegistration[] {
-  const cloneParameters = Type.Object({
-    url: Type.String({ description: "Remote repository HTTPS URL (e.g. https://github.com/vmlgtm/repo.git)" }),
-    dir: Type.Optional(Type.String({ description: "Target directory inside /workspace (e.g. /workspace/repo)" })),
-    ref: Type.Optional(Type.String({ description: "Branch, tag, or commit to clone. Defaults to remote default branch." })),
-    depth: Type.Optional(Type.Number({ description: "Shallow clone depth. Defaults to 1 (max 50)." }))
-  });
+/** A ref or path the model passes must not be read as an option. */
+function assertNotOption(name: string, value: string | undefined): void {
+  if (value !== undefined && value.startsWith("-")) throw new Error(`${name} must not start with '-' (got '${value}')`);
+}
 
-  const checkoutParameters = Type.Object({
-    dir: Type.Optional(Type.String({ description: "Working tree directory inside /workspace" })),
-    branch: Type.String({ description: "Branch name to checkout or create (e.g. otto/issue-123-fix-typo)" }),
-    create: Type.Optional(Type.Boolean({ description: "Create a new branch if true" }))
-  });
+function failed(step: string, result: RunResult): Error {
+  return new Error(`${step} failed (exit ${result.exitCode}): ${(result.stderr || result.stdout).trim().slice(-2000)}`);
+}
 
-  const statusParameters = Type.Object({
-    dir: Type.Optional(Type.String({ description: "Working tree directory inside /workspace" }))
-  });
+/** Status letters per path, from `git status --porcelain=v1`. */
+export function parseStatus(porcelain: string): { path: string; index: string; worktree: string }[] {
+  return porcelain
+    .split("\n")
+    .filter((line) => line.length > 3 && !line.startsWith("##"))
+    .map((line) => ({ index: line[0], worktree: line[1], path: line.slice(3) }));
+}
 
-  const diffParameters = Type.Object({
-    dir: Type.Optional(Type.String({ description: "Working tree directory inside /workspace" })),
-    ref: Type.Optional(Type.String({ description: "Ref to diff from (default HEAD)" })),
-    to: Type.Optional(Type.String({ description: "Second ref to diff to (optional)" })),
-    paths: Type.Optional(Type.Array(Type.String(), { description: "Filter diff to specific paths" }))
-  });
+const dirParameter = Type.Optional(
+  Type.String({ description: "Repository directory inside /workspace (default: the prepared repository)" })
+);
 
-  const commitParameters = Type.Object({
-    dir: Type.Optional(Type.String({ description: "Working tree directory inside /workspace" })),
-    message: Type.String({ description: "Structured commit message" }),
-    author_name: Type.Optional(Type.String({ description: "Commit author name" })),
-    author_email: Type.Optional(Type.String({ description: "Commit author email" })),
-    paths: Type.Optional(Type.Array(Type.String(), { description: "Paths to stage before committing. Defaults to all changes." }))
-  });
+const checkoutParameters = Type.Object({
+  dir: dirParameter,
+  branch: Type.String({ description: "Branch name to checkout or create (e.g. otto/issue-123-fix-typo)" }),
+  create: Type.Optional(Type.Boolean({ description: "Create a new branch if true" }))
+});
 
-  const pushParameters = Type.Object({
-    dir: Type.Optional(Type.String({ description: "Working tree directory inside /workspace" })),
-    remote: Type.Optional(Type.String({ description: "Remote name, defaults to origin" })),
-    branch: Type.Optional(Type.String({ description: "Branch to push. Defaults to current branch." })),
-    force: Type.Optional(Type.Boolean({ description: "Force push (prohibited by guardrail)" }))
-  });
+const statusParameters = Type.Object({ dir: dirParameter });
 
-  const cloneTool: ToolRegistration<typeof cloneParameters> = {
-    name: "git_clone",
-    description: "Clone a remote repository into /workspace. Defaults to shallow clone (depth: 1) with automatic credential injection.",
-    parameters: cloneParameters,
-    replay: "unsafe",
-    async execute(args) {
-      try {
-        const repoName = extractRepoName(args.url);
-        const targetDir = args.dir ? normalizeDir(args.dir) : `/workspace/${repoName}`;
-        const depth = typeof args.depth === "number" && args.depth > 0 ? Math.min(args.depth, 50) : 1;
+const diffParameters = Type.Object({
+  dir: dirParameter,
+  ref: Type.Optional(Type.String({ description: "Ref to diff from (default HEAD)" })),
+  to: Type.Optional(Type.String({ description: "Second ref to diff to (optional)" })),
+  paths: Type.Optional(Type.Array(Type.String(), { description: "Filter diff to specific paths" }))
+});
 
-        // In-host credential injection: never expose token to LLM context
-        const headers: Record<string, string> = {};
-        if (env?.GITHUB_TOKEN && args.url.includes("github.com")) {
-          Object.assign(headers, getGitAuthHeader(env.GITHUB_TOKEN));
-        }
+const commitParameters = Type.Object({
+  dir: dirParameter,
+  message: Type.String({ description: "Structured commit message" }),
+  author_name: Type.Optional(Type.String({ description: "Commit author name" })),
+  author_email: Type.Optional(Type.String({ description: "Commit author email" })),
+  paths: Type.Optional(Type.Array(Type.String(), { description: "Paths to stage before committing. Defaults to all changes." }))
+});
 
-        await workspace.git.clone({
-          url: args.url,
-          dir: targetDir,
-          ref: args.ref,
-          depth,
-          headers: Object.keys(headers).length > 0 ? headers : undefined
-        });
+const pushParameters = Type.Object({
+  dir: dirParameter,
+  remote: Type.Optional(Type.String({ description: "Remote name, defaults to origin" })),
+  branch: Type.Optional(Type.String({ description: "Branch to push. Defaults to current branch." })),
+  force: Type.Optional(Type.Boolean({ description: "Force push (prohibited by guardrail)" }))
+});
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                success: true,
-                dir: targetDir,
-                ref: args.ref ?? "HEAD",
-                depth
-              })
-            }
-          ]
-        };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: err instanceof Error ? err.message : String(err)
-              })
-            }
-          ],
-          isError: true
-        };
-      }
+/**
+ * Git on the session's container, with the guardrails of the earlier
+ * in-Worker tools: `otto/` branch names, no pushes to protected branches,
+ * no force pushes. `bash` could run `git push` itself, so the real
+ * enforcement is at the credential layer: the egress gateway adds the token
+ * only to the one push `git_push` allows (`Sandbox.withPushGrant`).
+ *
+ * Cloning is `prepare_workspace`'s job, since it needs internet.
+ */
+export function createGitTools(sandbox: Sandbox): ToolRegistration[] {
+  /** The repository directory: inside /workspace, default the prepared repo. */
+  const repoDir = async (dir: string | undefined): Promise<string> => {
+    const base = await sandbox.cwd();
+    if (!dir?.trim()) return base;
+    const resolved = posix.resolve(base, dir.trim());
+    if (resolved !== WORKSPACE_ROOT && !resolved.startsWith(`${WORKSPACE_ROOT}/`)) {
+      throw new Error(`dir must be inside ${WORKSPACE_ROOT} (got '${dir}')`);
     }
+    return resolved;
   };
+  const git = (dir: string, args: string[], timeoutSeconds = 120) =>
+    sandbox.run(["git", "-c", "core.quotepath=false", ...args], { cwd: dir, timeoutSeconds });
 
-  const checkoutTool: ToolRegistration<typeof checkoutParameters> = {
+  const checkout: ToolRegistration<typeof checkoutParameters> = {
     name: "git_checkout",
     description: "Checkout an existing branch or create a new feature branch adhering to 'otto/<issue-id>-<short-description>'.",
     parameters: checkoutParameters,
     replay: "unsafe",
+    executionMode: "sequential",
     async execute(args) {
       try {
-        const dir = normalizeDir(args.dir);
+        const dir = await repoDir(args.dir);
         const branch = args.branch.trim();
-
-        if (args.create) {
-          // Guardrail: Branch name enforcement
-          if (!OTTO_BRANCH_REGEX.test(branch)) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `GuardrailViolation: Branch name must follow the pattern 'otto/<issue-id>-<short-description>' (received: '${branch}')`
-                }
-              ],
-              isError: true
-            };
-          }
-          await workspace.git.branch({ dir, name: branch, checkout: true });
-        } else {
-          await workspace.git.checkout({ dir, ref: branch });
+        if (args.create && !OTTO_BRANCH_REGEX.test(branch)) {
+          return guardrail(
+            `Branch name must follow the pattern 'otto/<issue-id>-<short-description>' (received: '${branch}')`
+          );
         }
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ success: true, branch, dir })
-            }
-          ]
-        };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: err instanceof Error ? err.message : String(err)
-              })
-            }
-          ],
-          isError: true
-        };
+        assertNotOption("branch", branch);
+        const result = await git(dir, args.create ? ["checkout", "-b", branch] : ["checkout", branch, "--"]);
+        if (result.exitCode !== 0) throw failed("git checkout", result);
+        return text(JSON.stringify({ success: true, branch, dir }));
+      } catch (error) {
+        return errorResult(error);
       }
     }
   };
 
-  const statusTool: ToolRegistration<typeof statusParameters> = {
+  const status: ToolRegistration<typeof statusParameters> = {
     name: "git_status",
-    description: "Inspect staged and unstaged changes in the repository.",
+    description: "Inspect the current branch and the staged, unstaged and untracked changes in the repository.",
     parameters: statusParameters,
     replay: "safe",
     async execute(args) {
       try {
-        const dir = normalizeDir(args.dir);
-        const status = await workspace.git.status({ dir });
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ dir, status })
-            }
-          ]
-        };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: err instanceof Error ? err.message : String(err)
-              })
-            }
-          ],
-          isError: true
-        };
+        const dir = await repoDir(args.dir);
+        const result = await git(dir, ["status", "--porcelain=v1", "--branch"]);
+        if (result.exitCode !== 0) throw failed("git status", result);
+        const branch = /^## (?:No commits yet on )?([^.\s]+)/m.exec(result.stdout)?.[1];
+        return text(JSON.stringify({ dir, branch, status: parseStatus(result.stdout) }));
+      } catch (error) {
+        return errorResult(error);
       }
     }
   };
 
-  const diffTool: ToolRegistration<typeof diffParameters> = {
+  const diff: ToolRegistration<typeof diffParameters> = {
     name: "git_diff",
-    description: "Inspect unified diff of changes against HEAD or between refs.",
+    description:
+      "Inspect the unified diff of changes against HEAD (including new untracked files) or between two refs.",
     parameters: diffParameters,
     replay: "safe",
     async execute(args) {
       try {
-        const dir = normalizeDir(args.dir);
-        const diff = await workspace.git.diff({
-          dir,
-          ref: args.ref,
-          to: args.to,
-          paths: args.paths
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: diff || "No differences found."
-            }
-          ]
-        };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: err instanceof Error ? err.message : String(err)
-              })
-            }
-          ],
-          isError: true
-        };
+        const dir = await repoDir(args.dir);
+        const ref = args.ref?.trim() || "HEAD";
+        assertNotOption("ref", ref);
+        assertNotOption("to", args.to);
+        const paths = args.paths ?? [];
+        const tracked = await git(dir, ["diff", ref, ...(args.to ? [args.to] : []), "--", ...paths]);
+        if (tracked.exitCode !== 0) throw failed("git diff", tracked);
+        let output = tracked.stdout;
+        if (!args.to) {
+          // `git diff` leaves out files git does not track yet; a review must see them.
+          const untracked = await git(dir, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...paths]);
+          for (const file of untracked.stdout.split("\0").filter(Boolean).slice(0, 200)) {
+            const added = await git(dir, ["diff", "--no-index", "--", "/dev/null", file]);
+            output += added.stdout;
+          }
+        }
+        return text(head(output) || "No differences found.");
+      } catch (error) {
+        return errorResult(error);
       }
     }
   };
 
-  const commitTool: ToolRegistration<typeof commitParameters> = {
+  const commit: ToolRegistration<typeof commitParameters> = {
     name: "git_commit",
     description: "Stage modified files and commit with a structured commit message.",
     parameters: commitParameters,
     replay: "unsafe",
+    executionMode: "sequential",
     async execute(args) {
       try {
-        const dir = normalizeDir(args.dir);
-        await workspace.git.add({
-          dir,
-          paths: args.paths ?? ["."],
-          all: !args.paths
-        });
-
-        const commitResult = await workspace.git.commit({
-          dir,
-          message: args.message,
-          author: {
-            name: args.author_name ?? "otto-pi[bot]",
-            email: args.author_email ?? "otto-pi[bot]@users.noreply.github.com"
-          }
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                oid: commitResult.oid,
-                message: args.message,
-                dir
-              })
-            }
-          ]
-        };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: err instanceof Error ? err.message : String(err)
-              })
-            }
-          ],
-          isError: true
-        };
+        const dir = await repoDir(args.dir);
+        const staged = await git(dir, args.paths ? ["add", "--", ...args.paths] : ["add", "-A"]);
+        if (staged.exitCode !== 0) throw failed("git add", staged);
+        const name = args.author_name ?? BOT_NAME;
+        const email = args.author_email ?? BOT_EMAIL;
+        // The repo's own hooks are not run here; run_checks verifies the change.
+        const committed = await git(dir, [
+          "-c",
+          `user.name=${name}`,
+          "-c",
+          `user.email=${email}`,
+          "commit",
+          "--no-verify",
+          "-m",
+          args.message
+        ]);
+        if (committed.exitCode !== 0) throw failed("git commit", committed);
+        const oid = (await git(dir, ["rev-parse", "HEAD"])).stdout.trim();
+        return text(JSON.stringify({ oid, message: args.message, dir }));
+      } catch (error) {
+        return errorResult(error);
       }
     }
   };
 
-  const pushTool: ToolRegistration<typeof pushParameters> = {
+  const push: ToolRegistration<typeof pushParameters> = {
     name: "git_push",
-    description: "Push local branch commits to the remote origin. Guardrails prevent direct pushes to protected branches.",
+    description:
+      "Push local branch commits to the remote origin. Guardrails prevent direct pushes to protected branches.",
     parameters: pushParameters,
     replay: "unsafe",
+    executionMode: "sequential",
     async execute(args) {
       try {
-        const dir = normalizeDir(args.dir);
-
-        // Determine branch to push
-        let targetBranch = args.branch?.trim();
-        if (!targetBranch) {
-          try {
-            targetBranch = await workspace.git.currentBranch({ dir });
-          } catch {}
+        const dir = await repoDir(args.dir);
+        let branch = args.branch?.trim();
+        if (!branch) {
+          const current = await git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]);
+          branch = current.exitCode === 0 ? current.stdout.trim() : undefined;
         }
 
-        // Guardrail: Block direct pushes to default / protected branches
-        if (targetBranch && PROTECTED_BRANCHES.has(targetBranch.toLowerCase())) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `GuardrailViolation: Direct pushes to protected branch '${targetBranch}' are disabled`
-              }
-            ],
-            isError: true
-          };
+        if (branch && PROTECTED_BRANCHES.has(branch.toLowerCase())) {
+          return guardrail(`Direct pushes to protected branch '${branch}' are disabled`);
         }
-
-        // Guardrail: Block force pushes
-        if (args.force) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "GuardrailViolation: Force pushes are disabled"
-              }
-            ],
-            isError: true
-          };
+        if (args.force) return guardrail("Force pushes are disabled");
+        if (!branch || branch === "HEAD") return text("Error: Unable to determine current branch to push.", true);
+        if (!branch.startsWith("otto/")) {
+          return guardrail(
+            `Direct pushes to non-otto branch '${branch}' are disabled. Branch name must start with 'otto/'`
+          );
         }
-
-        if (!targetBranch) {
-          return {
-            content: [{ type: "text", text: "Error: Unable to determine current branch to push." }],
-            isError: true
-          };
+        if (!OTTO_BRANCH_REGEX.test(branch)) {
+          return guardrail(`Branch name must follow the pattern 'otto/<issue-id>-<short-description>' (received: '${branch}')`);
         }
+        const remote = args.remote?.trim() || "origin";
+        if (remote !== "origin") return guardrail(`Pushes go to 'origin' only (received: '${remote}')`);
 
-        // Guardrail: Enforcement of branch naming convention
-        if (!targetBranch.startsWith("otto/")) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `GuardrailViolation: Direct pushes to non-otto branch '${targetBranch}' are disabled. Branch name must start with 'otto/'`
-              }
-            ],
-            isError: true
-          };
-        }
-
-        // In-host credential injection
-        const headers: Record<string, string> = {};
-        if (env?.GITHUB_TOKEN) {
-          Object.assign(headers, getGitAuthHeader(env.GITHUB_TOKEN));
-        }
-
-        const pushRes = await workspace.git.push({
-          dir,
-          remote: args.remote ?? "origin",
-          ref: targetBranch,
-          headers: Object.keys(headers).length > 0 ? headers : undefined,
-          force: false
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                success: pushRes.ok,
-                branch: targetBranch,
-                refs: pushRes.refs
-              })
-            }
-          ]
-        };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: err instanceof Error ? err.message : String(err)
-              })
-            }
-          ],
-          isError: true
-        };
+        // The gateway adds the token to this one push, for this one branch.
+        const result = await sandbox.withPushGrant(branch, () =>
+          git(dir, ["-c", "credential.helper=", "push", "--porcelain", "origin", `refs/heads/${branch}:refs/heads/${branch}`], 300)
+        );
+        if (result.exitCode !== 0) throw failed("git push", result);
+        return text(JSON.stringify({ success: true, branch, output: result.stdout.trim().slice(-2000) }));
+      } catch (error) {
+        return errorResult(error);
       }
     }
   };
 
-  return [cloneTool, checkoutTool, statusTool, diffTool, commitTool, pushTool];
+  return [checkout, status, diff, commit, push];
 }

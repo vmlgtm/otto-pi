@@ -1,7 +1,4 @@
 import { DurableObject } from "cloudflare:workers";
-import { Workspace, type DurableObjectStorageLike } from "@cloudflare/computer";
-import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
-import { createGitClient } from "@cloudflare/computer/git";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { createRegistry, Harness } from "@earendil-works/pi-durable";
 import { routeAgentRequest } from "agents";
@@ -19,7 +16,6 @@ import { createGitHubTools } from "./github-tools";
 import { createMcpTools } from "./mcp";
 import { PiSessionSockets } from "./sockets";
 import { createDelegateTaskTool, SubagentTracker } from "./agents/orchestrator";
-import { ASSERT_MODULE, JAVASCRIPT_BACKEND } from "./workspace";
 import { interruptLogExtension } from "./interrupted";
 import { Sandbox } from "./sandbox";
 import { ContainerEnv } from "./container-env";
@@ -69,29 +65,6 @@ export async function verifyGitHubSignature(
 export class PiAgent extends DurableObject<Env> {
   // Workers AI and AI Gateway over the AI binding, as a pi-ai provider.
   readonly ai = createAI({ binding: this.env.AI });
-  // A durable filesystem on the object's SQLite, beside pi's own tables.
-  readonly workspace = new Workspace({
-    storage: this.ctx.storage as unknown as DurableObjectStorageLike,
-    git: createGitClient(),
-    backends: this.env.LOADER
-      ? [
-          new WorkerJavaScriptBackend({
-            id: JAVASCRIPT_BACKEND,
-            loader: this.env.LOADER,
-            root: "/workspace",
-            access: "read-write",
-            allowGitNetwork: true,
-            defaultTimeoutMs: 15_000,
-            maxTimeoutMs: 30_000,
-            egress: { mode: "none" },
-            modules: {
-              "node:assert": ASSERT_MODULE,
-              assert: ASSERT_MODULE
-            }
-          })
-        ]
-      : []
-  });
   // One container per session, started on first use (src/sandbox.ts).
   readonly sandbox = new Sandbox({
     container: () => this.ctx.container,
@@ -111,7 +84,7 @@ export class PiAgent extends DurableObject<Env> {
         ...createSearchTools(this.sandbox),
         ...createSandboxTools(this.sandbox)
       ];
-      const gitTools = createGitTools(this.workspace, this.env);
+      const gitTools = createGitTools(this.sandbox);
       const gitHubTools = createGitHubTools(this.env);
       let mcpTools: any[] = [];
       try {
@@ -123,7 +96,7 @@ export class PiAgent extends DurableObject<Env> {
       const allTools = [...workspaceTools, ...gitTools, ...gitHubTools, ...mcpTools];
       const delegateTaskTool = createDelegateTaskTool({
         harness: this.harness,
-        workspace: this.workspace,
+        changedFiles: () => this.sandbox.changedFiles(),
         allTools,
         tracker: this.tracker,
         defaultModel: this.ai(MODEL_ID)
@@ -217,9 +190,6 @@ export class PiAgent extends DurableObject<Env> {
 
   /** Host startup, after the harness has opened pi. */
   async onStart(): Promise<void> {
-    try {
-      await this.workspace.fs.mkdir("/workspace", { recursive: true });
-    } catch {}
     await this.sockets.reattach();
     try {
       await this.harness.session().setModel(this.ai(MODEL_ID));

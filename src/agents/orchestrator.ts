@@ -1,7 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { ToolRegistration, EntryRecord } from "@earendil-works/pi-durable";
 import { ROOT_SESSION, type PiHarness, type PiModel, type PiPromptResponse } from "agents/harness/pi";
-import type { Workspace } from "@cloudflare/computer";
 import {
   type AgentRole,
   getRoleDefinition,
@@ -215,7 +214,8 @@ export const DelegateTaskParameters = Type.Object({
 
 export interface CreateDelegateTaskToolOptions {
   harness: PiHarness;
-  workspace: Workspace;
+  /** Paths git reports as changed in the shared workspace; best effort. */
+  changedFiles?: () => Promise<string[]>;
   allTools: readonly ToolRegistration[];
   tracker: SubagentTracker;
   defaultModel?: PiModel;
@@ -227,7 +227,7 @@ export interface CreateDelegateTaskToolOptions {
 export function createDelegateTaskTool(
   options: CreateDelegateTaskToolOptions
 ): ToolRegistration<typeof DelegateTaskParameters> {
-  const { harness, workspace, allTools, tracker, defaultModel } = options;
+  const { harness, changedFiles, allTools, tracker, defaultModel } = options;
 
   return {
     name: "delegate_task",
@@ -403,8 +403,7 @@ export function createDelegateTaskTool(
       // 5. Detect files modified
       let filesModified = extractFilesModified(entries);
       try {
-        const gitStatus = await workspace.git.status({ dir: "/workspace" });
-        const gitModified = gitStatus.map((s) => s.path);
+        const gitModified = (await changedFiles?.()) ?? [];
         filesModified = Array.from(new Set([...filesModified, ...gitModified]));
       } catch {}
 

@@ -16,9 +16,6 @@ import {
   type Extension,
   type ToolRegistration
 } from "@earendil-works/pi-durable";
-import { Workspace, type DurableObjectStorageLike } from "@cloudflare/computer";
-import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
-import { createGitClient } from "@cloudflare/computer/git";
 import { DurableObject } from "cloudflare:workers";
 import {
   PiHarness,
@@ -30,8 +27,11 @@ import { Lifecycle } from "agents/lifecycle";
 import { WebSockets } from "agents/websockets";
 import { PiSessionSockets } from "../sockets";
 import { EMPTY_VIEW, reduceEvents } from "../view";
-import { ASSERT_MODULE, createWorkspaceTools, JAVASCRIPT_BACKEND } from "../workspace";
+import { ContainerEnv } from "../container-env";
+import { createCodingTools, createSandboxTools, createSearchTools } from "../container-tools";
 import { createGitTools } from "../git-tools";
+import { Sandbox } from "../sandbox";
+import { FakeContainer, fakeEgress, type FakeReply } from "./fake-container";
 import { createGitHubTools } from "../github-tools";
 import { createDelegateTaskTool, SubagentTracker } from "../agents/orchestrator";
 import { interruptLogExtension } from "../interrupted";
@@ -158,10 +158,7 @@ function script(context: TranscriptContext): AssistantMessage {
       } else if (coderToolResults.length === 2) {
         return fauxAssistantMessage(
           [
-            fauxToolCall("exec", {
-              command:
-                "import { sortArray } from '/workspace/sort.js'; import assert from 'node:assert'; assert.deepStrictEqual(sortArray([3,1,2]), [1,2,3]); console.log('tests passed');"
-            })
+            fauxToolCall("bash", { command: "node /workspace/sort.test.js" })
           ],
           { stopReason: "toolUse" }
         );
@@ -235,17 +232,13 @@ function script(context: TranscriptContext): AssistantMessage {
         parsed = JSON.parse(resultText);
       } catch {}
 
-      if (parsed.exitCode !== 0 || parsed.stderr?.includes("AssertionError")) {
+      void parsed;
+      if (last.isError && resultText.includes("AssertionError")) {
         return fauxAssistantMessage(
-          [
-            fauxToolCall("exec", {
-              command:
-                "import assert from 'node:assert'; assert.strictEqual(2 + 2, 4); console.log('tests passed');"
-            })
-          ],
+          [fauxToolCall("bash", { command: "node -e \"assert.strictEqual(2 + 2, 4)\" && echo 'tests passed'" })],
           { stopReason: "toolUse" }
         );
-      } else if (parsed.exitCode === 0) {
+      } else if (!last.isError) {
         return fauxAssistantMessage([
           fauxText("Self-correction loop successful: tests pass after fixing assertion.")
         ]);
@@ -264,7 +257,8 @@ function script(context: TranscriptContext): AssistantMessage {
       try {
         parsed = JSON.parse(resultText);
       } catch {}
-      const val = parsed.stdout?.trim() ?? "720";
+      void parsed;
+      const val = resultText.trim().split("\n")[0] || "720";
       return fauxAssistantMessage([
         fauxText(`Factorial of 6 is ${val}`)
       ]);
@@ -301,27 +295,27 @@ function script(context: TranscriptContext): AssistantMessage {
     if (last?.role === "toolResult") {
       if (count === 1) {
         return fauxAssistantMessage(
-          [fauxToolCall("git_clone", { url: "https://github.com/vmlgtm/test-repo.git", dir: "/workspace/test-repo" })],
+          [fauxToolCall("prepare_workspace", { url: "https://github.com/vmlgtm/ufo.git" })],
           { stopReason: "toolUse" }
         );
       } else if (count === 2) {
         return fauxAssistantMessage(
-          [fauxToolCall("git_checkout", { dir: "/workspace/test-repo", branch: "otto/issue-1-fix-typo", create: true })],
+          [fauxToolCall("git_checkout", { branch: "otto/issue-1-fix-typo", create: true })],
           { stopReason: "toolUse" }
         );
       } else if (count === 3) {
         return fauxAssistantMessage(
-          [fauxToolCall("write", { path: "/workspace/test-repo/README.md", content: "# Test Repo\nFixed typo in README.\n" })],
+          [fauxToolCall("write", { path: "/workspace/ufo/README.md", content: "# Test Repo\nFixed typo in README.\n" })],
           { stopReason: "toolUse" }
         );
       } else if (count === 4) {
         return fauxAssistantMessage(
-          [fauxToolCall("git_commit", { dir: "/workspace/test-repo", message: "fix: correct typo in README" })],
+          [fauxToolCall("git_commit", { message: "fix: correct typo in README" })],
           { stopReason: "toolUse" }
         );
       } else if (count === 5) {
         return fauxAssistantMessage(
-          [fauxToolCall("git_push", { dir: "/workspace/test-repo", branch: "otto/issue-1-fix-typo" })],
+          [fauxToolCall("git_push", { branch: "otto/issue-1-fix-typo" })],
           { stopReason: "toolUse" }
         );
       } else if (count === 6) {
@@ -357,12 +351,7 @@ function script(context: TranscriptContext): AssistantMessage {
   // Self-correction trigger
   if (prompt.includes("math.test.js")) {
     return fauxAssistantMessage(
-      [
-        fauxToolCall("exec", {
-          command:
-            "import assert from 'node:assert'; assert.strictEqual(2 + 2, 5);"
-        })
-      ],
+      [fauxToolCall("bash", { command: "node -e \"assert.strictEqual(2 + 2, 5)\"" })],
       { stopReason: "toolUse" }
     );
   }
@@ -370,12 +359,7 @@ function script(context: TranscriptContext): AssistantMessage {
   // Factorial trigger
   if (prompt.includes("calc.js")) {
     return fauxAssistantMessage(
-      [
-        fauxToolCall("exec", {
-          command:
-            "let f = 1; for (let i = 1; i <= 6; i++) f *= i; console.log(f);"
-        })
-      ],
+      [fauxToolCall("bash", { command: "node /workspace/calc.js" })],
       { stopReason: "toolUse" }
     );
   }
@@ -404,11 +388,11 @@ function script(context: TranscriptContext): AssistantMessage {
     );
   }
 
-  // Direct exec prompt
-  const execMatch = /^exec:\s*([\s\S]+)$/.exec(prompt);
-  if (execMatch) {
+  // Direct shell prompt
+  const bashMatch = /^bash:\s*([\s\S]+)$/.exec(prompt);
+  if (bashMatch) {
     return fauxAssistantMessage(
-      [fauxToolCall("exec", { command: execMatch[1] })],
+      [fauxToolCall("bash", { command: bashMatch[1] })],
       { stopReason: "toolUse" }
     );
   }
@@ -429,33 +413,57 @@ function script(context: TranscriptContext): AssistantMessage {
   return fauxAssistantMessage([fauxText(`echo: ${prompt}`)]);
 }
 
+const TEST_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
+/**
+ * What the fake container answers for commands that are not file
+ * operations: just enough git, package-manager and node behaviour for the
+ * scripted scenarios. File operations go to its in-memory filesystem.
+ */
+function commandReply(argv: readonly string[], container: FakeContainer): FakeReply {
+  const [program, ...rest] = argv;
+  const script = program === "bash" && rest[0] === "-c" ? rest[1] ?? "" : "";
+  if (program === "git") {
+    const verb = rest.find((arg) => !arg.startsWith("-") && !arg.includes("="));
+    switch (verb) {
+      case "ls-remote":
+        return { stdout: `${TEST_COMMIT}\tHEAD\n` };
+      case "rev-parse":
+        return { stdout: rest.includes("--abbrev-ref") ? "otto/issue-1-fix-typo\n" : `${TEST_COMMIT}\n` };
+      case "diff":
+        return { stdout: "diff --git a/sort.js b/sort.js\n-  return [...arr].sort((a, b) => b - a);\n+  return [...arr].sort((a, b) => a - b);\n" };
+      default:
+        return {};
+    }
+  }
+  if (script.includes("2 + 2, 5")) {
+    return { exitCode: 1, stderr: "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n4 !== 5\n" };
+  }
+  if (script.includes("2 + 2, 4")) return { stdout: "tests passed\n" };
+  if (script === "node /workspace/calc.js") return { stdout: "720\n" };
+  if (script === "node /workspace/sort.test.js") {
+    return container.fs.readFile("/workspace/sort.js").includes("a - b")
+      ? { stdout: "tests passed\n" }
+      : { exitCode: 1, stderr: "AssertionError: [3,2,1] !== [1,2,3]\n" };
+  }
+  const repeat = /^yes \| head -c (\d+)$/.exec(script);
+  if (repeat) return { stdout: "y\n".repeat(Number(repeat[1]) / 2) };
+  return {};
+}
+
 /** Real Durable Object fixture: the example's composition with pi-ai's faux provider. */
 export class PiHarnessTestObject extends DurableObject<Env> {
   readonly #faux = fauxProvider({
     tokensPerSecond: 200,
     tokenSize: { min: 2, max: 4 }
   });
-  readonly workspace = new Workspace({
-    storage: this.ctx.storage as unknown as DurableObjectStorageLike,
-    git: createGitClient(),
-    backends: this.env.LOADER
-      ? [
-          new WorkerJavaScriptBackend({
-            id: JAVASCRIPT_BACKEND,
-            loader: this.env.LOADER,
-            root: "/workspace",
-            access: "read-write",
-            allowGitNetwork: false,
-            defaultTimeoutMs: 15_000,
-            maxTimeoutMs: 30_000,
-            egress: { mode: "none" },
-            modules: {
-              "node:assert": ASSERT_MODULE,
-              assert: ASSERT_MODULE
-            }
-          })
-        ]
-      : []
+  /** The session's container: an in-memory filesystem plus scripted command replies. */
+  readonly container = new FakeContainer();
+  readonly sandbox = new Sandbox({
+    container: () => this.container,
+    storage: this.ctx.storage,
+    egress: fakeEgress,
+    snapshots: false
   });
   readonly registry = createRegistry();
   /** Structured log lines the app emitted, for assertions. */
@@ -473,14 +481,11 @@ export class PiHarnessTestObject extends DurableObject<Env> {
           (line) => this.logLines.push(line)
         )
       );
-      const workspaceTools = createWorkspaceTools(this.workspace);
-      const gitTools = createGitTools(this.workspace, this.env);
-      const gitHubTools = createGitHubTools(this.env);
-      const allTools = [...workspaceTools, ...gitTools, ...gitHubTools];
+      const allTools = this.#allTools();
 
       const delegateTaskTool = createDelegateTaskTool({
         harness: this.harness,
-        workspace: this.workspace,
+        changedFiles: () => this.sandbox.changedFiles(),
         allTools,
         tracker: this.tracker,
         defaultModel: this.#faux.getModel()
@@ -507,6 +512,11 @@ export class PiHarnessTestObject extends DurableObject<Env> {
         {
           models,
           registry: this.registry,
+          env: async (target) =>
+            new ContainerEnv(this.sandbox, {
+              id: "container:test",
+              cwd: target.cwd ?? (await this.sandbox.cwd())
+            }),
           settings: {
             retry: { enabled: false, maxRetries: 0, baseDelayMs: 0 }
           },
@@ -528,18 +538,28 @@ export class PiHarnessTestObject extends DurableObject<Env> {
   readonly webSockets = new WebSockets(this.sockets.options());
   readonly lifecycle = Lifecycle.install(this)
     .use(this.webSockets)
+    .use(this.sandbox)
     .use(this.harness);
 
   async onStart(): Promise<void> {
-    try {
-      await this.workspace.fs.mkdir("/workspace", { recursive: true });
-    } catch {}
     await this.sockets.reattach();
+  }
+
+  /** Every model tool, as PiAgent composes them (MCP aside). */
+  #allTools(): ToolRegistration[] {
+    return [
+      ...createCodingTools(this.sandbox),
+      ...createSearchTools(this.sandbox),
+      ...createSandboxTools(this.sandbox),
+      ...createGitTools(this.sandbox),
+      ...createGitHubTools(this.env)
+    ];
   }
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.#faux.setResponses(Array.from({ length: 500 }, () => script));
+    this.container.reply = (argv) => commandReply(argv, this.container);
   }
 
   /** Prompt the root session; the result without its transcript. */
@@ -560,46 +580,20 @@ export class PiHarnessTestObject extends DurableObject<Env> {
   }
 
   async writeFile(path: string, content: string): Promise<void> {
-    const lastSlash = path.lastIndexOf("/");
-    if (lastSlash > 0) {
-      await this.workspace.fs.mkdir(path.substring(0, lastSlash), {
-        recursive: true
-      });
-    }
-    await this.workspace.fs.writeFile(path, content);
+    this.container.fs.writeFile(path, content);
   }
 
   async readFile(path: string): Promise<string> {
-    return this.workspace.fs.readFile(path, "utf8");
+    return this.container.fs.readFile(path);
   }
 
-  async runExec(command: string): Promise<string> {
-    const tools = createWorkspaceTools(this.workspace);
-    const execTool = tools.find((t) => t.name === "exec");
-    if (!execTool) throw new Error("exec tool not found");
-    const result = await execTool.execute(
-      { command },
-      { callId: "direct-call" } as any,
-      {} as any
-    );
-    const first = result.content?.[0];
-    return first && "type" in first && first.type === "text" ? first.text : "";
-  }
-
-  async gitInit(dir: string, defaultBranch = "main"): Promise<void> {
-    await this.workspace.git.init({ dir, defaultBranch });
-  }
-
-  async getGitCurrentBranch(dir: string): Promise<string | undefined> {
-    return this.workspace.git.currentBranch({ dir });
+  /** Every command the container ran, without the sandbox's env/timeout wrapper. */
+  async commands(): Promise<string[]> {
+    return this.container.execs.map((exec) => exec.argv.join(" "));
   }
 
   async runTool(name: string, args: Record<string, unknown>): Promise<{ content: any[]; isError?: boolean }> {
-    const gitTools = createGitTools(this.workspace, this.env);
-    const githubTools = createGitHubTools(this.env);
-    const workspaceTools = createWorkspaceTools(this.workspace);
-    const all = [...workspaceTools, ...gitTools, ...githubTools];
-    const tool = all.find((t) => t.name === name);
+    const tool = this.#allTools().find((t) => t.name === name);
     if (!tool) throw new Error(`Tool ${name} not found`);
     const result = await tool.execute(args, { callId: "test-call" } as any, {} as any);
     return {
@@ -609,15 +603,10 @@ export class PiHarnessTestObject extends DurableObject<Env> {
   }
 
   async runDelegateTask(args: any, callerSessionId = "1"): Promise<{ content: any[]; isError?: boolean }> {
-    const workspaceTools = createWorkspaceTools(this.workspace);
-    const gitTools = createGitTools(this.workspace, this.env);
-    const githubTools = createGitHubTools(this.env);
-    const allTools = [...workspaceTools, ...gitTools, ...githubTools];
-
     const delegateTaskTool = createDelegateTaskTool({
       harness: this.harness,
-      workspace: this.workspace,
-      allTools,
+      changedFiles: () => this.sandbox.changedFiles(),
+      allTools: this.#allTools(),
       tracker: this.tracker,
       defaultModel: this.#faux.getModel()
     });

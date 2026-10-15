@@ -298,9 +298,6 @@ describe("Phase 3: Multi-Agent Swarms & Pi Subagents Collaboration", () => {
       const initialCode = await stub.readFile("/workspace/sort.js");
       expect(initialCode).toContain("b - a");
 
-      // Initialize git in /workspace
-      await stub.gitInit("/workspace");
-
       // Submit prompt to root architect
       const prompt =
         "Fix the failing sorting algorithm in /workspace/sort.js and add unit tests. Have the explorer locate it, the coder fix it and verify with tests, and the reviewer audit the diff before you report back.";

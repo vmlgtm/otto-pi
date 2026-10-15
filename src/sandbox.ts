@@ -340,6 +340,17 @@ export class Sandbox extends LifecycleCapability {
     };
   }
 
+  /** Paths `git status` reports in the prepared repo; empty when nothing is prepared. */
+  async changedFiles(): Promise<string[]> {
+    const state = await this.workspace();
+    if (!state) return [];
+    const result = await this.run(["git", "-c", "core.quotepath=false", "status", "--porcelain=v1"], { cwd: state.dir, timeoutSeconds: 60 });
+    return result.stdout
+      .split("\n")
+      .filter((line) => line.length > 3)
+      .map((line) => line.slice(3));
+  }
+
   /**
    * Clone and install a configured repository, with internet only for that.
    * A repository that is not in `src/repos.ts` is refused.

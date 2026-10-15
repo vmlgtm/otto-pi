@@ -1,7 +1,30 @@
 import { env } from "cloudflare:workers";
 import { routeAgentRequest } from "agents";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createGitTools, parseStatus } from "../git-tools";
 import { createGitHubTools, fetchWithBackoff } from "../github-tools";
+import { Sandbox } from "../sandbox";
+import { FakeContainer, fakeEgress, memoryStorage, ufoReplies, unwrap } from "./fake-container";
+
+/** git tools on a fake container with ufo prepared; `reply` answers git commands. */
+async function gitOnFake(reply: (argv: readonly string[]) => { exitCode?: number; stdout?: string; stderr?: string } = () => ({})) {
+  const container = new FakeContainer();
+  container.reply = ufoReplies;
+  const sandbox = new Sandbox({ container: () => container, storage: memoryStorage(), egress: fakeEgress, snapshots: false });
+  await sandbox.prepare("https://github.com/vmlgtm/ufo.git");
+  container.reply = (argv) => {
+    const git = argv[0] === "git" ? argv.filter((arg, i) => !(i > 0 && (arg === "-c" || argv[i - 1] === "-c"))) : argv;
+    return reply(git);
+  };
+  const tools = createGitTools(sandbox);
+  const run = async (name: string, args: Record<string, unknown>) => {
+    const tool = tools.find((t) => t.name === name)!;
+    const result = await tool.execute(args as never, { callId: "g" } as never, {} as never);
+    return { text: (result.content ?? []).map((part: any) => part.text).join(""), isError: Boolean(result.isError) };
+  };
+  const last = () => unwrap(container.execs.at(-1)!.argv);
+  return { container, run, last, tools };
+}
 import type { PiServerMessage } from "../protocol";
 import { EMPTY_VIEW, reduceEvents, type PiSessionView } from "../view";
 
@@ -54,56 +77,91 @@ describe("Component A & DoD 1, 2, 4, 5: Git & GitHub Automation Tools with Secur
   let stub: any;
 
   beforeEach(async () => {
-    const name = crypto.randomUUID();
-    stub = env.PI_HARNESS_TEST.getByName(name);
-    await stub.gitInit("/workspace/repo", "main");
-    await stub.writeFile("/workspace/repo/README.md", "# Test Repo\n");
-    await stub.runTool("git_commit", {
-      dir: "/workspace/repo",
-      message: "Initial commit"
-    });
+    stub = env.PI_HARNESS_TEST.getByName(crypto.randomUUID());
   });
 
-  describe("Native Git Automation (DoD 1)", () => {
-    it("inspects status and unified diff of modified files", async () => {
-      // 1. Initial status
-      const initialStatus = await stub.runTool("git_status", { dir: "/workspace/repo" });
-      expect(initialStatus.isError).toBe(false);
-
-      // 2. Modify README.md
-      await stub.writeFile("/workspace/repo/README.md", "# Test Repo\nUpdated line.\n");
-
-      // 3. Inspect diff
-      const diffRes = await stub.runTool("git_diff", { dir: "/workspace/repo" });
-      expect(diffRes.isError).toBe(false);
-      const diffText = diffRes.content[0]?.text;
-      expect(diffText).toContain("+Updated line.");
+  describe("Native Git Automation (DoD 1), over real git in the container", () => {
+    it("inspects status and the unified diff, including files git does not track yet", async () => {
+      const { run, container } = await gitOnFake((argv) => {
+        if (argv[1] === "status") return { stdout: "## otto/issue-1-fix\n M README.md\n?? notes.md\n" };
+        if (argv[1] === "ls-files") return { stdout: "notes.md\0" };
+        if (argv[1] === "diff" && argv.includes("--no-index")) return { exitCode: 1, stdout: "+++ b/notes.md\n+new file\n" };
+        if (argv[1] === "diff") return { stdout: "--- a/README.md\n+++ b/README.md\n+Updated line.\n" };
+        return {};
+      });
+      const status = await run("git_status", {});
+      expect(JSON.parse(status.text)).toEqual({
+        dir: "/workspace/ufo",
+        branch: "otto/issue-1-fix",
+        status: [
+          { index: " ", worktree: "M", path: "README.md" },
+          { index: "?", worktree: "?", path: "notes.md" }
+        ]
+      });
+      const diff = await run("git_diff", {});
+      expect(diff.isError).toBe(false);
+      expect(diff.text).toContain("+Updated line.");
+      expect(diff.text).toContain("+new file");
+      const commands = container.execs.map((exec) => unwrap(exec.argv).join(" "));
+      expect(commands).toContain("git -c core.quotepath=false diff HEAD --");
+      expect(commands).toContain("git -c core.quotepath=false diff --no-index -- /dev/null notes.md");
     });
 
     it("creates feature branch adhering to otto/<issue-id>-<short-description>", async () => {
-      const checkoutRes = await stub.runTool("git_checkout", {
-        dir: "/workspace/repo",
-        branch: "otto/issue-1-fix-typo",
-        create: true
-      });
-      expect(checkoutRes.isError).toBe(false);
-
-      const branch = await stub.getGitCurrentBranch("/workspace/repo");
-      expect(branch).toBe("otto/issue-1-fix-typo");
+      const { run, last } = await gitOnFake();
+      const result = await run("git_checkout", { branch: "otto/issue-1-fix-typo", create: true });
+      expect(result.isError).toBe(false);
+      expect(last()).toEqual(["git", "-c", "core.quotepath=false", "checkout", "-b", "otto/issue-1-fix-typo"]);
     });
 
     it("commits modified files with structured commit message and bot identity", async () => {
-      await stub.writeFile("/workspace/repo/README.md", "# Test Repo\nFixing typo.\n");
+      const { run, container } = await gitOnFake((argv) =>
+        argv[1] === "rev-parse" ? { stdout: "abc123\n" } : {}
+      );
+      const result = await run("git_commit", { message: "fix: resolve typo in README" });
+      expect(result.isError).toBe(false);
+      expect(JSON.parse(result.text)).toEqual({ oid: "abc123", message: "fix: resolve typo in README", dir: "/workspace/ufo" });
+      const commit = container.execs.map((exec) => unwrap(exec.argv)).find((argv) => argv.includes("commit"))!;
+      expect(commit).toEqual([
+        "git", "-c", "core.quotepath=false",
+        "-c", "user.name=otto-pi[bot]",
+        "-c", "user.email=otto-pi[bot]@users.noreply.github.com",
+        "commit", "--no-verify", "-m", "fix: resolve typo in README"
+      ]);
+    });
 
-      const commitRes = await stub.runTool("git_commit", {
-        dir: "/workspace/repo",
-        message: "fix: resolve typo in README"
+    it("keeps git inside /workspace and refuses refs that read as options", async () => {
+      const { run } = await gitOnFake();
+      expect((await run("git_status", { dir: "/etc" })).text).toContain("dir must be inside /workspace");
+      expect((await run("git_diff", { ref: "--output=/tmp/x" })).text).toContain("must not start with '-'");
+    });
+
+    it("pushes with a one-branch grant from the egress gateway, then takes it back", async () => {
+      let grant: unknown;
+      const { run, container, last } = await gitOnFake((argv) => {
+        if (argv[1] === "push") grant = container.egress;
+        return {};
       });
+      const result = await run("git_push", { branch: "otto/issue-1-fix" });
+      expect(result.isError).toBe(false);
+      expect(last()).toEqual([
+        "git", "-c", "core.quotepath=false", "-c", "credential.helper=",
+        "push", "--porcelain", "origin", "refs/heads/otto/issue-1-fix:refs/heads/otto/issue-1-fix"
+      ]);
+      expect(grant).toEqual({ phase: "locked", repo: "vmlgtm/ufo", push: { repo: "vmlgtm/ufo", branch: "otto/issue-1-fix" } });
+      expect(container.egress).toEqual({ phase: "locked", repo: "vmlgtm/ufo" });
+    });
 
-      expect(commitRes.isError).toBe(false);
-      const parsed = JSON.parse(commitRes.content[0]?.text);
-      expect(parsed.oid).toBeDefined();
-      expect(parsed.message).toBe("fix: resolve typo in README");
+    it("parses porcelain status lines", () => {
+      expect(parseStatus("## main\nA  src/new.ts\n D gone.ts\n")).toEqual([
+        { index: "A", worktree: " ", path: "src/new.ts" },
+        { index: " ", worktree: "D", path: "gone.ts" }
+      ]);
+    });
+
+    it("no longer offers git_clone: prepare_workspace owns cloning", async () => {
+      const { tools } = await gitOnFake();
+      expect(tools.map((t) => t.name)).toEqual(["git_checkout", "git_status", "git_diff", "git_commit", "git_push"]);
     });
   });
 
@@ -349,12 +407,6 @@ describe("Component A & DoD 1, 2, 4, 5: Git & GitHub Automation Tools with Secur
     it("autonomously executes issue resolution, branch checkout, commit, push, and PR creation", async () => {
       const name = crypto.randomUUID();
       const testStub = env.PI_HARNESS_TEST.getByName(name);
-      await testStub.gitInit("/workspace/test-repo", "main");
-      await testStub.writeFile("/workspace/test-repo/README.md", "# Test Repo\n");
-      await testStub.runTool("git_commit", {
-        dir: "/workspace/test-repo",
-        message: "Initial commit"
-      });
 
       const socket = await connect(name);
       const client = follow(socket);
@@ -382,6 +434,10 @@ describe("Component A & DoD 1, 2, 4, 5: Git & GitHub Automation Tools with Secur
       );
 
       await client.until(() => !client.view().running);
+      const commands: string[] = await testStub.commands();
+      expect(commands.some((c) => c.includes("git clone --depth=1 https://github.com/vmlgtm/ufo.git /workspace/ufo"))).toBe(true);
+      expect(commands.some((c) => c.includes("push --porcelain origin refs/heads/otto/issue-1-fix-typo"))).toBe(true);
+      expect(await testStub.readFile("/workspace/ufo/README.md")).toContain("Fixed typo");
       socket.close();
     });
   });
