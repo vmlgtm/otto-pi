@@ -167,6 +167,10 @@ export class Sandbox extends LifecycleCapability {
   #instance: Instance | undefined;
   /** Set when a prepared workspace was found gone; the next use reports it once. */
   #lost: WorkspaceState | undefined;
+  /** The current container's bundle holds the egress CA. */
+  #caTrusted = false;
+  /** The trust attempt started with the container, if still running. */
+  #caPending: Promise<boolean> | undefined;
 
   constructor(options: SandboxOptions) {
     super("workspace-sandbox");
@@ -234,6 +238,8 @@ export class Sandbox extends LifecycleCapability {
     }
 
     const size = instance ?? state?.instance ?? "standard-1";
+    this.#caTrusted = false;
+    this.#caPending = undefined;
     // Intercepts first, so the container starts with HTTPS interception (and its CA) in place.
     await this.#lock(container, state);
     container.start(
@@ -243,7 +249,8 @@ export class Sandbox extends LifecycleCapability {
     );
     this.#instance = size;
     await this.#waitReady(container);
-    await this.#trustCa(container);
+    // In the background: only network steps need it, and they wait for it (#requireCa).
+    this.#caPending = this.#trustCa(container).catch(() => false);
     await container.setInactivityTimeout(IDLE_STOP_MS + 5 * 60_000).catch(() => {});
     console.log(JSON.stringify({ event: "container_start", instance: size, snapshot: snapshot?.id ?? null }));
 
@@ -282,15 +289,20 @@ export class Sandbox extends LifecycleCapability {
   }
 
   /**
-   * Add the egress CA to the system bundle. It is placed after the container
-   * starts, so wait up to 20 s for it; if it never comes, log what is there.
+   * Add the egress CA to the system bundle, once per container. Under
+   * wrangler dev it is there at start; on the platform it appears some time
+   * after start, so wait up to 60 s, opening one TLS connection after 2 s in
+   * case the platform writes it on first interception. Logs how long it took.
    */
-  async #trustCa(container: ContainerLike): Promise<void> {
+  async #trustCa(container: ContainerLike): Promise<boolean> {
+    if (this.#caTrusted) return true;
     const process = await container.exec([
       "sh",
       "-c",
-      'for i in $(seq 1 40); do [ -s "$1" ] && break; sleep 0.5; done; ' +
-        'if [ -s "$1" ]; then cat "$1" >> "$2"; ' +
+      'i=0; while [ ! -s "$1" ] && [ $i -lt 120 ]; do ' +
+        'if [ $i -eq 4 ]; then (echo | timeout 5 openssl s_client -connect github.com:443 -servername github.com >/dev/null 2>&1 &); fi; ' +
+        "sleep 0.5; i=$((i+1)); done; " +
+        'if [ -s "$1" ]; then grep -qF "$(sed -n 2p "$1")" "$2" || cat "$1" >> "$2"; echo "waited=$((i * 500))"; ' +
         'else ls -la /etc/cloudflare /etc/cloudflare/certs 2>&1; exit 3; fi',
       "sh",
       EGRESS_CA,
@@ -299,8 +311,21 @@ export class Sandbox extends LifecycleCapability {
     const [stdout, exitCode] = await Promise.all([collect(process.stdout), process.exitCode]);
     if (exitCode !== 0) {
       console.warn(JSON.stringify({ event: "container_ca_missing", listing: stdout.slice(0, 1000) }));
+      return false;
+    }
+    console.log(JSON.stringify({ event: "container_ca_trusted", waitedMs: Number(/waited=(\d+)/.exec(stdout)?.[1] ?? 0) }));
+    this.#caTrusted = true;
+    return true;
+  }
+
+  /** Before anything that needs HTTPS through the gateway. */
+  async #requireCa(container: ContainerLike): Promise<void> {
+    const pending = this.#caPending;
+    this.#caPending = undefined;
+    if (pending && (await pending)) return;
+    if (!(await this.#trustCa(container))) {
       throw new Error(
-        "The workspace container has no egress CA certificate, so HTTPS from it cannot be verified. Try prepare_workspace again."
+        "The workspace container has no egress CA certificate yet, so HTTPS from it cannot be verified. Try again in a minute."
       );
     }
   }
@@ -326,6 +351,7 @@ export class Sandbox extends LifecycleCapability {
   /** Stop the container and forget it; the workspace record stays for the lost-workspace notice. */
   async stop(): Promise<void> {
     this.#started = undefined;
+    this.#caTrusted = false;
     this.#instance = undefined;
     await this.lifecycleServices?.jobs.cancel(IDLE_JOB);
     const container = this.#options.container();
@@ -432,6 +458,7 @@ export class Sandbox extends LifecycleCapability {
     let commit = "";
     await this.#egress(container, { phase: "setup" });
     try {
+      await time("trustCa", () => this.#requireCa(container));
       const refs = check(
         "git ls-remote",
         await time("lsRemote", () =>
@@ -466,6 +493,7 @@ export class Sandbox extends LifecycleCapability {
           snapshot = "failed";
         }
         await this.#egress(container, { phase: "setup" });
+        await this.#requireCa(container);
       }
 
       if (!restored) {
@@ -550,6 +578,7 @@ export class Sandbox extends LifecycleCapability {
     }
     const container = await this.container();
     const repo = githubRepoName(state.url);
+    await this.#requireCa(container);
     await this.#egress(container, { phase: "setup" });
     try {
       return await this.#run(container, argv, { cwd: state.dir, env: commandEnv(state.node) });
@@ -567,6 +596,7 @@ export class Sandbox extends LifecycleCapability {
     const repo = state ? githubRepoName(state.url) : undefined;
     if (!repo) throw new Error("Pushes need a prepared GitHub repository.");
     const container = await this.container();
+    await this.#requireCa(container);
     await this.#egress(container, { phase: "locked", repo, push: { repo, branch } });
     try {
       return await work();
