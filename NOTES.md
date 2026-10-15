@@ -382,3 +382,31 @@ export WRANGLER_DOCKER_BIN="$PWD/scripts/podman-as-docker.sh"
 export DOCKER_HOST=unix:///tmp/otto-docker.sock
 pnpm start
 ```
+
+### Component E: the interrupted-tool error, reproduced on today's code
+
+Reproduced on the live Worker (Phase 1–3 code) on 15 Oct 2026, 10:33 UTC,
+session `repro-e-1792060381`: one `git_clone` of wp-calypso at depth 1.
+Workers Logs: the alarm that ran it used 32,500 ms CPU and 51 s wall, then
+"Durable Object exceeded its CPU time limit and was reset". The next alarm
+(27 ms CPU) ran pi's `pi.tool` recovery: `git_clone` is `replay: "unsafe"`,
+so pi did not rerun it and wrote an error result, "Tool git_clone was
+interrupted and may have partially run", wrapped in `<harness>` markup.
+The model reported it and the run ended at 60 s.
+
+So today the card does leave "Running", but only shows pi's raw markup,
+and nothing in the logs names the tool that the reset killed. The 14 Oct
+incident's endless spinner (a second 10.3 s CPU burst, then a stall) did
+not recur and could not be reproduced. If it comes back, the new
+`tool_interrupted` log line will be missing for it, which tells a stalled
+recovery apart from a slow one.
+
+Fix: `src/interrupted.ts` recognises pi's wording. The transcript
+projection adds `interrupted: "Interrupted: the session restarted while
+<tool> was running"`, and the card shows that with an "Interrupted"
+badge. A `pi.generation` `afterTools` hook logs
+`{"event":"tool_interrupted","session","tool","callId","message"}`. pi
+writes interrupted results without `afterTool`, and hooks cannot read
+entries, so the hook reads the round's results through the harness after
+it returns. `src/tests/interrupted.test.ts` covers it: an unsafe tool,
+`abortAllDurableObjects()`, then the wake alarm.

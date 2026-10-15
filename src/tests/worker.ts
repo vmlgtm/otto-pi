@@ -34,6 +34,7 @@ import { ASSERT_MODULE, createWorkspaceTools, JAVASCRIPT_BACKEND } from "../work
 import { createGitTools } from "../git-tools";
 import { createGitHubTools } from "../github-tools";
 import { createDelegateTaskTool, SubagentTracker } from "../agents/orchestrator";
+import { interruptLogExtension } from "../interrupted";
 import { type AgentRole, getRoleDefinition, filterToolsForRole } from "../agents/roles";
 
 const RELEASE_KEY = "test:gate:release";
@@ -457,6 +458,8 @@ export class PiHarnessTestObject extends DurableObject<Env> {
       : []
   });
   readonly registry = createRegistry();
+  /** Structured log lines the app emitted, for assertions. */
+  readonly logLines: string[] = [];
   readonly tracker: SubagentTracker = new SubagentTracker(this.ctx.storage, {
     broadcastSubagentStart: (s) => this.sockets.broadcastSubagentStart(s),
     broadcastSubagentDone: (s) => this.sockets.broadcastSubagentDone(s)
@@ -464,6 +467,12 @@ export class PiHarnessTestObject extends DurableObject<Env> {
   readonly harness = new PiHarness({
     harness: async ({ storage, context }) => {
       this.registry.install(this.#testTools());
+      this.registry.install(
+        interruptLogExtension(
+          () => this.harness,
+          (line) => this.logLines.push(line)
+        )
+      );
       const workspaceTools = createWorkspaceTools(this.workspace);
       const gitTools = createGitTools(this.workspace, this.env);
       const gitHubTools = createGitHubTools(this.env);
@@ -635,6 +644,14 @@ export class PiHarnessTestObject extends DurableObject<Env> {
 
   wait(operationId: string, session?: string): Promise<PiOperationResult> {
     return this.harness.wait(operationId, session ? { session } : {});
+  }
+
+  /** Structured log lines, waiting up to a second for at least one. */
+  async logs(): Promise<string[]> {
+    for (let i = 0; i < 50 && this.logLines.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return [...this.logLines];
   }
 
   /** Resolve once the gate tool has started `runs` times. */

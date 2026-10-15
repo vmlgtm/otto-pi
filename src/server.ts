@@ -21,6 +21,7 @@ import { PiSessionSockets } from "./sockets";
 import { createDelegateTaskTool, SubagentTracker } from "./agents/orchestrator";
 import { ASSERT_MODULE, createWorkspaceTools, JAVASCRIPT_BACKEND } from "./workspace";
 import type { EgressProps } from "./egress";
+import { interruptLogExtension } from "./interrupted";
 
 export { OttoEgress } from "./egress";
 
@@ -115,6 +116,7 @@ export class PiAgent extends DurableObject<Env> {
         defaultModel: this.ai(MODEL_ID)
       });
 
+      this.registry.install(interruptLogExtension(() => this.harness));
       this.registry.install({
         name: "playground",
         sections: [{ key: "preamble", render: () => PREAMBLE, tag: false }],

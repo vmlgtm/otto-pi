@@ -150,10 +150,13 @@ function ToolResultCard({
 }: {
   part: Extract<TranscriptPart, { type: "tool-result" }>;
 }) {
-  const text = part.content
-    .filter((content) => content.type === "text")
-    .map((content) => (content.type === "text" ? content.text : ""))
-    .join("\n");
+  // An interrupted call shows the plain reason, not pi's harness markup.
+  const text =
+    part.interrupted ??
+    part.content
+      .filter((content) => content.type === "text")
+      .map((content) => (content.type === "text" ? content.text : ""))
+      .join("\n");
   const images = part.content.filter((content) => content.type === "image");
 
   let role: string | null = null;
@@ -195,7 +198,7 @@ function ToolResultCard({
           variant={part.error ? "destructive" : "secondary"}
           className="font-mono text-[10px] px-1.5 py-0.5"
         >
-          {part.error ? "Failed" : "Done"}
+          {part.interrupted ? "Interrupted" : part.error ? "Failed" : "Done"}
         </Badge>
       </summary>
       <div className="space-y-3 border-t border-kumo-line bg-kumo-base/50 px-3.5 py-3">

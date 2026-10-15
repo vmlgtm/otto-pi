@@ -7,6 +7,7 @@ import type {
   UserMessage
 } from "@earendil-works/pi-ai";
 import type { EntryRecord } from "@earendil-works/pi-durable";
+import { interruptedNotice, interruptedTool } from "./interrupted";
 
 /**
  * This app's display model for a transcript. The harness returns pi's own
@@ -30,6 +31,8 @@ export type PiMessagePart =
       readonly content: readonly (TextContent | ImageContent)[];
       readonly details?: JsonValue;
       readonly error: boolean;
+      /** Set when a reset cut the call off: the plain message the card shows. */
+      readonly interrupted?: string;
     };
 
 /** One display-ready message projected from a pi transcript entry. */
@@ -91,7 +94,12 @@ export function projectMessage(message: Message, id: string): PiMessage {
           ? {}
           : { error: message.errorMessage })
       };
-    case "toolResult":
+    case "toolResult": {
+      const tool = message.isError
+        ? interruptedTool(
+            message.content.map((part) => (part.type === "text" ? part.text : "")).join("\n")
+          )
+        : undefined;
       return {
         id,
         role: "tool",
@@ -104,11 +112,13 @@ export function projectMessage(message: Message, id: string): PiMessage {
             ...(message.details === undefined
               ? {}
               : { details: message.details }),
-            error: message.isError
+            error: message.isError,
+            ...(tool === undefined ? {} : { interrupted: interruptedNotice(tool) })
           }
         ],
         timestamp: message.timestamp
       };
+    }
   }
 }
 
