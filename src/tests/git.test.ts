@@ -130,9 +130,17 @@ describe("Component A & DoD 1, 2, 4, 5: Git & GitHub Automation Tools with Secur
       ]);
     });
 
+    it("reads a relative dir as relative to /workspace, as the earlier tools did", async () => {
+      const { run, container } = await gitOnFake();
+      await run("git_checkout", { branch: "otto/issue-1-fix", create: true, dir: "ufo" });
+      await run("git_status", { dir: "." });
+      expect(container.execs.slice(-2).map((exec) => exec.cwd)).toEqual(["/workspace/ufo", "/workspace/ufo"]);
+    });
+
     it("keeps git inside /workspace and refuses refs that read as options", async () => {
       const { run } = await gitOnFake();
       expect((await run("git_status", { dir: "/etc" })).text).toContain("dir must be inside /workspace");
+      expect((await run("git_status", { dir: "../etc" })).text).toContain("dir must be inside /workspace");
       expect((await run("git_diff", { ref: "--output=/tmp/x" })).text).toContain("must not start with '-'");
     });
 

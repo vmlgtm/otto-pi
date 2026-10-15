@@ -84,11 +84,16 @@ const pushParameters = Type.Object({
  * Cloning is `prepare_workspace`'s job, since it needs internet.
  */
 export function createGitTools(sandbox: Sandbox): ToolRegistration[] {
-  /** The repository directory: inside /workspace, default the prepared repo. */
+  /**
+   * The repository directory: inside /workspace, default the prepared repo.
+   * A relative `dir` is relative to /workspace, as in the earlier tools
+   * ("ufo" is /workspace/ufo); "." is the prepared repo.
+   */
   const repoDir = async (dir: string | undefined): Promise<string> => {
     const base = await sandbox.cwd();
-    if (!dir?.trim()) return base;
-    const resolved = posix.resolve(base, dir.trim());
+    const trimmed = dir?.trim();
+    if (!trimmed || trimmed === ".") return base;
+    const resolved = posix.resolve(WORKSPACE_ROOT, trimmed);
     if (resolved !== WORKSPACE_ROOT && !resolved.startsWith(`${WORKSPACE_ROOT}/`)) {
       throw new Error(`dir must be inside ${WORKSPACE_ROOT} (got '${dir}')`);
     }
