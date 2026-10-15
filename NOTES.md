@@ -227,7 +227,10 @@ session's tag.
 
 ### Workspace tools
 
-The model's tools are computer's `createPiTools`, adapted in
+*Superseded in Phase 4: computer is gone, and pi's own tools run on
+`ContainerEnv`; see "ExecutionEnv, not Files" below. Kept for the record.*
+
+The model's tools were computer's `createPiTools`, adapted in
 `src/workspace.ts`, not pi's own `read`/`bash`/`edit`/`write` on an
 `ExecutionEnv`. computer's set comes with the Workspace's limits, locks and
 schemas, and its `exec` runs on a Workspace backend. What came up:
@@ -275,8 +278,8 @@ example.
 - Compaction. No longer pending upstream: 0.99.2 ships `CompactionPolicy`,
   `CompactionHooks` and the rest, wired into `HarnessOptions`. Not yet used
   or tested here.
-- `ExecutionEnv` for pi's own `read`/`bash`/`edit`/`write`. Unused here:
-  the Workspace tools come from computer instead (see "Workspace tools").
+- ~~`ExecutionEnv` for pi's own `read`/`bash`/`edit`/`write`.~~ Done in
+  Phase 4: `ContainerEnv`.
 - Session deletion. pi has no conversation delete.
 
 ## Phase 4 spike: container sandbox (15 Oct 2026)

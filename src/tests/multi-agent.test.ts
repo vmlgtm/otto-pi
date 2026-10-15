@@ -73,22 +73,24 @@ describe("Phase 3: Multi-Agent Swarms & Pi Subagents Collaboration", () => {
       expect(isToolAllowedForRole("explorer", "grep")).toBe(true);
       expect(isToolAllowedForRole("explorer", "write")).toBe(false);
       expect(isToolAllowedForRole("explorer", "edit")).toBe(false);
-      expect(isToolAllowedForRole("explorer", "exec")).toBe(false);
+      expect(isToolAllowedForRole("explorer", "bash")).toBe(false);
       expect(isToolAllowedForRole("explorer", "git_push")).toBe(false);
       expect(isToolAllowedForRole("explorer", "delegate_task")).toBe(false);
 
       // Verify Coder role
       expect(coder.role).toBe("coder");
-      expect(coder.allowedTools).toEqual(["read", "write", "edit", "exec"]);
+      expect(coder.allowedTools).toEqual(["read", "write", "edit", "bash", "run_checks"]);
       expect(isToolAllowedForRole("coder", "write")).toBe(true);
-      expect(isToolAllowedForRole("coder", "exec")).toBe(true);
+      expect(isToolAllowedForRole("coder", "bash")).toBe(true);
+      expect(isToolAllowedForRole("coder", "prepare_workspace")).toBe(false);
       expect(isToolAllowedForRole("coder", "git_push")).toBe(false);
       expect(isToolAllowedForRole("coder", "github_create_pull_request")).toBe(false);
       expect(isToolAllowedForRole("coder", "delegate_task")).toBe(false);
 
       // Verify Reviewer role
       expect(reviewer.role).toBe("reviewer");
-      expect(reviewer.allowedTools).toEqual(["git_diff", "read", "exec"]);
+      expect(reviewer.allowedTools).toEqual(["git_diff", "read", "run_checks"]);
+      expect(isToolAllowedForRole("reviewer", "bash")).toBe(false);
       expect(isToolAllowedForRole("reviewer", "git_diff")).toBe(true);
       expect(isToolAllowedForRole("reviewer", "read")).toBe(true);
       expect(isToolAllowedForRole("reviewer", "write")).toBe(false);
@@ -99,6 +101,10 @@ describe("Phase 3: Multi-Agent Swarms & Pi Subagents Collaboration", () => {
       // Verify Architect has orchestrator tools
       expect(architect.allowedTools).toContain("delegate_task");
       expect(architect.allowedTools).toContain("github_create_pull_request");
+      expect(architect.allowedTools).toContain("prepare_workspace");
+      expect(architect.allowedTools).toContain("bash");
+      expect(architect.allowedTools).not.toContain("exec");
+      expect(architect.allowedTools).not.toContain("git_clone");
     });
 
     it("filters tools correctly when preparing child session registries", () => {
@@ -109,7 +115,9 @@ describe("Phase 3: Multi-Agent Swarms & Pi Subagents Collaboration", () => {
         { name: "ls" },
         { name: "find" },
         { name: "grep" },
-        { name: "exec" },
+        { name: "bash" },
+        { name: "run_checks" },
+        { name: "prepare_workspace" },
         { name: "git_diff" },
         { name: "git_push" },
         { name: "delegate_task" }
@@ -119,10 +127,10 @@ describe("Phase 3: Multi-Agent Swarms & Pi Subagents Collaboration", () => {
       expect(explorerTools).toEqual(["read", "ls", "find", "grep"]);
 
       const coderTools = filterToolsForRole(mockTools, "coder").map((t) => t.name);
-      expect(coderTools).toEqual(["read", "write", "edit", "exec"]);
+      expect(coderTools).toEqual(["read", "write", "edit", "bash", "run_checks"]);
 
       const reviewerTools = filterToolsForRole(mockTools, "reviewer").map((t) => t.name);
-      expect(reviewerTools).toEqual(["read", "exec", "git_diff"]);
+      expect(reviewerTools).toEqual(["read", "run_checks", "git_diff"]);
     });
 
     it("verifies Explorer role rejects mutating tool calls (Step 2)", async () => {
@@ -131,7 +139,7 @@ describe("Phase 3: Multi-Agent Swarms & Pi Subagents Collaboration", () => {
 
       // Verify that explorer cannot execute write
       expect(isToolAllowedForRole("explorer", "write")).toBe(false);
-      expect(isToolAllowedForRole("explorer", "delete")).toBe(false);
+      expect(isToolAllowedForRole("explorer", "bash")).toBe(false);
     });
   });
 

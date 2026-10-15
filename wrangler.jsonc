@@ -6,10 +6,8 @@
   "compatibility_date": "2026-06-11",
   "compatibility_flags": ["nodejs_compat"],
   "ai": { "binding": "AI", "remote": true },
-  "worker_loaders": [{ "binding": "LOADER" }],
 
   "previews": {
-    "worker_loaders": [{ "binding": "LOADER" }],
     "ai": { "binding": "AI", "remote": true },
     "durable_objects": {
       "bindings": [
@@ -54,7 +52,6 @@
     "test": {
       "name": "otto-pi-test",
       "ai": { "binding": "AI", "remote": true },
-      "worker_loaders": [{ "binding": "LOADER" }],
       "containers": [
         {
           "class_name": "PiAgent",
