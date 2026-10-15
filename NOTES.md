@@ -334,10 +334,15 @@ deployed checks.
 
 ### Does the container survive a Durable Object reset?
 
-Locally, no. After `ctx.abort()` the new instance briefly reports
-`running: true`, but `exec` fails with "container state improper". So a
-background command cannot be picked up after a reset, and the workspace
-must be prepared again. To re-check on the deployed Worker.
+Locally, usually yes. With `src/sandbox.ts`, three `ctx.abort()` resets in
+a row (2 s and 20 s apart) left the container running with
+`/workspace/ufo` intact, and the restarted object kept it. Once, in the
+spike (after starting a `setsid` background job), the restarted object saw
+`running: true`, but `exec` failed with "container state improper". So
+the sandbox never trusts `running`. It probes with `exec(["true"])` (5 s
+limit) and keeps the container only if that answers. Otherwise it starts
+a new one, and the next tool call gets `WorkspaceLostError` ("call
+prepare_workspace again"). Still to check on the deployed Worker.
 
 ### Snapshots
 

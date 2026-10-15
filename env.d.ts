@@ -10,6 +10,8 @@ interface __BaseEnv_Env {
   MCP_SERVERS?: string;
   // "1" enables /api/dev/* routes. Set only in .dev.vars, never on the deployed Worker.
   DEV_ROUTES?: string;
+  // "on" lets prepare_workspace save and restore container snapshots (public beta).
+  SANDBOX_SNAPSHOTS?: string;
 }
 declare namespace Cloudflare {
   interface GlobalProps {
