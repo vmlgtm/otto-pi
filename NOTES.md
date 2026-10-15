@@ -278,3 +278,107 @@ example.
 - `ExecutionEnv` for pi's own `read`/`bash`/`edit`/`write`. Unused here:
   the Workspace tools come from computer instead (see "Workspace tools").
 - Session deletion. pi has no conversation delete.
+
+## Phase 4 spike: container sandbox (15 Oct 2026)
+
+Answers to the handoff's "verify before building" list, from a spike on
+`PiAgent` under `pnpm start` (Podman 5.8.2, arm64 Mac building linux/amd64).
+
+### The 1.0 API, as shipped
+
+- `@cloudflare/sandbox@1.0.1` is only `Files`, `S3Mount` and
+  `DirectoryBackup`. Container control is the runtime's `ctx.container`
+  (`Container` in workers-types): `start({ image, enableInternet, instance,
+  containerSnapshot, env, entrypoint, labels })`, `exec(argv, { cwd, env,
+  signal, stdout, stderr })` → `ExecProcess` (`exitCode`, `output()`,
+  streams, `kill()`), `snapshotContainer({ name })`, `destroy()`,
+  `monitor()`, `setInactivityTimeout(ms)`, `interceptOutboundHttp(s)`,
+  `interceptAllOutboundHttp`.
+- Instance size is chosen per `start()` (`instance: "standard-1"` …
+  `"standard-4"`), so ufo and Calypso get different sizes from one config.
+- `start()` returns before the container is ready. Poll with
+  `exec(["true"])` until it succeeds; `monitor()` rejects with
+  "Container failed to start" if it never comes up.
+- wrangler only accepts `class_name`, `scheduling_policy`, `images`,
+  `name`, `observability`, `ssh` on a `durable_object` container;
+  `max_instances` is refused.
+
+### Internet on/off without a restart (deviation from Component B)
+
+The handoff says: start with internet on, clone and install, then restart
+with internet off. A restart without a snapshot loses the root filesystem,
+so with snapshots off (the required fallback) the install would be lost.
+
+Instead the container always starts with `enableInternet: false`, and a
+catch-all intercept (`interceptOutboundHttps("*")` plus
+`interceptAllOutboundHttp`) sends every request to `OttoEgress`
+(`src/egress.ts`). Its props say what is allowed: `setup` forwards
+everything, `locked` forwards only git fetches of the session's repo and a
+push that `git_push` allowed for one branch. Re-registering the intercept
+swaps the props; the docs say in-flight connections pick up the new
+handler. Checked: `pnpm install` of ufo (397 packages) ran through the
+intercept in 33–35 s; in `locked`, `git push` from a shell got
+"otto egress: push without git_push: no credentials" (HTTP 403).
+
+The container must trust `/etc/cloudflare/certs/cloudflare-containers-ca.crt`.
+It exists only once the container runs, so trust is set up by an exec after
+start (`update-ca-certificates`, ~9 s locally), and `GIT_SSL_CAINFO`,
+`NODE_EXTRA_CA_CERTS` and `npm_config_cafile` point at the system bundle.
+
+### Can vitest-pool-workers run containers?
+
+Not relied on. Tests must run with no container engine, so they use a fake
+`ctx.container` that records argv and returns canned output. Real container
+behaviour is checked by `POST /api/dev/conformance` locally and by the
+deployed checks.
+
+### Does the container survive a Durable Object reset?
+
+Locally, no. After `ctx.abort()` the new instance briefly reports
+`running: true`, but `exec` fails with "container state improper". So a
+background command cannot be picked up after a reset, and the workspace
+must be prepared again. To re-check on the deployed Worker.
+
+### Snapshots
+
+Work under `wrangler dev` (no extra setup). ufo after install: snapshot
+14.5 s, 1.06 GB (the whole root filesystem, image included), restore 11.4 s
+to a container with `node_modules` present, against a 35 s fresh install.
+Calypso numbers: see "Calypso measurements" below.
+
+### ufo commands (corrects the handoff)
+
+ufo is a pnpm repo (`packageManager: pnpm@10.28.0`, `pnpm-lock.yaml`, no
+`package-lock.json`), so `npm ci` fails with EUSAGE. Install is
+`pnpm install --frozen-lockfile`; tests are `pnpm exec vitest run` (all
+files pass, ~13 s). The repo's own `test` script also runs lint and
+`--typecheck`.
+
+### Podman, and this Mac's network
+
+Three local-only problems, none in production:
+
+1. Wrangler runs `docker build --provenance=false`; Podman has no such
+   flag. `scripts/podman-as-docker.sh` drops it
+   (`WRANGLER_DOCKER_BIN=$PWD/scripts/podman-as-docker.sh`).
+2. workerd creates containers through the Docker API with
+   `HostConfig.MemorySwappiness`, which Podman's crun rejects on cgroup v2
+   ("cannot set memory swappiness with cgroupv2"). Both the container and
+   its proxy sidecar fail to start. `scripts/podman-socket-proxy.mjs` sits
+   in front of Podman's socket and drops the field.
+3. macOS limits unix socket paths to 104 bytes. A longer `DOCKER_HOST`
+   path fails as an opaque "internal error" from workerd. Use
+   `/tmp/otto-docker.sock`.
+
+The Mac's traffic goes through Zscaler, which re-signs TLS. A container
+reaching the internet directly fails certificate checks; through the
+intercept it works, because workerd's own `fetch()` trusts the host.
+
+Local start:
+
+```sh
+node scripts/podman-socket-proxy.mjs /tmp/otto-docker.sock &
+export WRANGLER_DOCKER_BIN="$PWD/scripts/podman-as-docker.sh"
+export DOCKER_HOST=unix:///tmp/otto-docker.sock
+pnpm start
+```

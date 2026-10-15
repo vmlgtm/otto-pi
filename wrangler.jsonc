@@ -21,6 +21,14 @@
     }
   },
 
+  "containers": [
+    {
+      "class_name": "PiAgent",
+      "scheduling_policy": "durable_object",
+      "images": { "workspace": { "dockerfile": "./Dockerfile" } }
+    }
+  ],
+
   "assets": {
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/agents/*"]
@@ -47,6 +55,13 @@
       "name": "otto-pi-test",
       "ai": { "binding": "AI", "remote": true },
       "worker_loaders": [{ "binding": "LOADER" }],
+      "containers": [
+        {
+          "class_name": "PiAgent",
+          "scheduling_policy": "durable_object",
+          "images": { "workspace": { "dockerfile": "./Dockerfile" } }
+        }
+      ],
       "durable_objects": {
         "bindings": [
           {

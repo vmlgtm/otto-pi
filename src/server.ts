@@ -20,6 +20,9 @@ import { createMcpTools } from "./mcp";
 import { PiSessionSockets } from "./sockets";
 import { createDelegateTaskTool, SubagentTracker } from "./agents/orchestrator";
 import { ASSERT_MODULE, createWorkspaceTools, JAVASCRIPT_BACKEND } from "./workspace";
+import type { EgressProps } from "./egress";
+
+export { OttoEgress } from "./egress";
 
 const MODEL_ID = "@cf/qwen/qwen3.8-27b";
 
@@ -168,6 +171,127 @@ export class PiAgent extends DurableObject<Env> {
     return result;
   }
 
+  /** Phase 4 spike (DEV_ROUTES only): clone and install ufo through the egress gateway. */
+  async spike(step: string): Promise<unknown> {
+    const container = this.ctx.container;
+    if (!container) return { error: "no ctx.container" };
+    const log: unknown[] = [];
+    const t = Date.now();
+    const run = async (argv: string[], cwd = "/workspace") => {
+      const start = Date.now();
+      const proc = await container.exec(argv, { cwd });
+      const out = await proc.output();
+      const dec = new TextDecoder();
+      const entry = {
+        argv: argv.join(" "),
+        exitCode: out.exitCode,
+        ms: Date.now() - start,
+        stdout: dec.decode(out.stdout).slice(-1500),
+        stderr: dec.decode(out.stderr).slice(0, 700) + " ... " + dec.decode(out.stderr).slice(-700)
+      };
+      log.push(entry);
+      return entry;
+    };
+    const egress = (props: EgressProps) =>
+      (this.ctx.exports as any).OttoEgress({ props }) as Fetcher;
+    if (step === "status") {
+      return { running: container.running, inspect: await container.inspect() };
+    }
+    if (step === "abort") {
+      this.ctx.abort("spike: simulated reset");
+    }
+    if (step === "probe") {
+      const proc = await container.exec(["sh", "-c", "wc -l < /workspace/bg.log; date"]);
+      const out = await proc.output();
+      return { running: container.running, out: new TextDecoder().decode(out.stdout) };
+    }
+    if (step === "bg") {
+      await container.exec(["sh", "-c", "rm -f /workspace/bg.log; nohup setsid sh -c 'for i in $(seq 1 300); do date >> /workspace/bg.log; sleep 1; done' >/dev/null 2>&1 &"]);
+      return { started: true };
+    }
+    if (step === "snapshot") {
+      try {
+        const t0 = Date.now();
+        const snap = await container.snapshotContainer({ name: "spike" });
+        return { snap, ms: Date.now() - t0 };
+      } catch (error) {
+        return { snapshotError: String(error) };
+      }
+    }
+    if (step.startsWith("restore:")) {
+      const t0 = Date.now();
+      if (container.running) await container.destroy().catch(() => {});
+      container.start({ containerSnapshot: { id: step.slice(8) }, enableInternet: false });
+      for (let i = 0; i < 120; i++) {
+        try {
+          const proc = await container.exec(["sh", "-c", "ls /workspace/ufo/node_modules | wc -l"]);
+          const out = await proc.output();
+          return { ms: Date.now() - t0, modules: new TextDecoder().decode(out.stdout) };
+        } catch {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+      return { error: "restore timed out" };
+    }
+    if (step === "stop") {
+      await container.destroy();
+      return { running: container.running };
+    }
+    if (!container.running) {
+      container.start({ image: container.images.workspace, enableInternet: false, instance: "standard-1" });
+      log.push({ started: Date.now() - t });
+    }
+    let exited: unknown;
+    container.monitor().then(
+      () => (exited = { exited: "ok" }),
+      (error) => (exited = { exited: String(error), stack: error?.stack })
+    );
+    const step_ = async (name: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+        log.push({ ok: name, at: Date.now() - t });
+      } catch (error) {
+        log.push({ failed: name, error: String(error), stack: (error as Error)?.stack });
+        throw Object.assign(new Error("spike"), { log });
+      }
+    };
+    try {
+      await step_("interceptHttps", () => container.interceptOutboundHttps("*", egress({ phase: "setup" })));
+      await step_("interceptHttp", () => container.interceptAllOutboundHttp(egress({ phase: "setup" })));
+    } catch {
+      return { log, running: container.running };
+    }
+    for (let i = 0; i < 60; i++) {
+      try {
+        await run(["true"]);
+        break;
+      } catch (error) {
+        if (exited) return { exited, log, running: container.running };
+        if (i === 59) return { error: String(error), log, running: container.running };
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    log.push({ ready: Date.now() - t });
+    await run(["sh", "-c", "ls -la /etc/cloudflare/certs/ 2>&1; cp $CF_CA /usr/local/share/ca-certificates/cf.crt && update-ca-certificates 2>&1 | tail -1"]);
+    if (step === "clone" || step === "all") {
+      await run(["rm", "-rf", "/workspace/ufo"]);
+      await run(["npm", "--version"]);
+      await run(["git", "clone", "--depth=1", "https://github.com/vmlgtm/ufo.git", "/workspace/ufo"]);
+    }
+    if (step === "install" || step === "all") {
+      await run(["pnpm", "install", "--frozen-lockfile"], "/workspace/ufo");
+    }
+    if (step === "test" || step === "all") {
+      await container.interceptOutboundHttps("*", egress({ phase: "locked", repo: "vmlgtm/ufo" }));
+      await container.interceptAllOutboundHttp(egress({ phase: "locked", repo: "vmlgtm/ufo" }));
+      await run(["pnpm", "exec", "vitest", "run"], "/workspace/ufo");
+      await run(["sh", "-c", "curl -sS -m 10 https://registry.npmjs.org/ -o /dev/null -w '%{http_code}' 2>&1; echo; git push origin HEAD:refs/heads/otto/spike 2>&1 | tail -3"], "/workspace/ufo");
+      await run(["sh", "-c", "env | grep -i -E 'token|auth|secret' || echo no-credential-env"]);
+    }
+    await run(["sh", "-c", "du -sh /workspace/ufo 2>/dev/null; free -m | head -2"]);
+    return { totalMs: Date.now() - t, log };
+  }
+
   /** Host startup, after the harness has opened pi. */
   async onStart(): Promise<void> {
     try {
@@ -189,6 +313,11 @@ export default {
     if (url.pathname === "/api/session") {
       // A fresh session id for the client to open its WebSocket against.
       return Response.json({ session: crypto.randomUUID() });
+    }
+
+    if (url.pathname === "/api/dev/spike" && env.DEV_ROUTES === "1") {
+      const stub = env.PiAgent.get(env.PiAgent.idFromName(url.searchParams.get("name") ?? "spike"));
+      return Response.json(await stub.spike(url.searchParams.get("step") ?? "all"));
     }
 
     // Component C: Secure Webhook Receiver Route

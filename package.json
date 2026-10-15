@@ -15,6 +15,7 @@
   "dependencies": {
     "@cloudflare/computer": "^0.4.0",
     "@cloudflare/kumo": "^2.6.0",
+    "@cloudflare/sandbox": "1.0.1",
     "@earendil-works/chord": "^1.0.0",
     "@earendil-works/pi-ai": "^1.0.0",
     "@earendil-works/pi-durable": "^1.0.0",

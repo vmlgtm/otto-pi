@@ -8,6 +8,8 @@ interface __BaseEnv_Env {
   GITHUB_APP_PRIVATE_KEY?: string;
   GITHUB_WEBHOOK_SECRET?: string;
   MCP_SERVERS?: string;
+  // "1" enables /api/dev/* routes. Set only in .dev.vars, never on the deployed Worker.
+  DEV_ROUTES?: string;
 }
 declare namespace Cloudflare {
   interface GlobalProps {

@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 4 Handoff: Container Sandbox</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1d1d1b; --muted: #6b6b66; --line: #e3e2de;
+    --panel: #f3f2ef; --accent: #b4441e; --ok: #2f6f3e; --warn: #8a5a00;
+    --code: #f0efeb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --fg: #e9e8e4; --muted: #9a9993; --line: #2e2e2b;
+      --panel: #1f1f1d; --accent: #e07a52; --ok: #7cc48d; --warn: #e0b45a;
+      --code: #232321;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 48px 20px 96px; }
+  h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 8px; }
+  h2 { font-size: 1.35rem; margin: 48px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.08rem; margin: 28px 0 8px; }
+  p, li { max-width: 74ch; }
+  .meta { color: var(--muted); font-size: 0.92rem; margin-bottom: 24px; }
+  .lead { font-size: 1.12rem; }
+  code { font: 0.88em/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); padding: 14px 16px; border-radius: 8px; overflow-x: auto; font: 0.85rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 0.93rem; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; }
+  .callout { border-left: 4px solid var(--accent); background: var(--panel); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .callout.verify { border-color: var(--warn); }
+  .callout.ok { border-color: var(--ok); }
+  .callout strong:first-child { display: block; margin-bottom: 4px; }
+  .tag { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; margin-right: 6px; }
+  .tag.verify { color: var(--warn); }
+  .tag.fact { color: var(--ok); }
+  .tag.decided { color: var(--accent); }
+  nav ol { columns: 2; column-gap: 32px; padding-left: 20px; }
+  nav li { margin: 2px 0; }
+  a { color: var(--accent); }
+  ul.checklist { list-style: none; padding-left: 0; }
+  ul.checklist li::before { content: "☐ "; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+
+<h1 id="title">Phase 4 Handoff: Container Sandbox for <code>otto-pi</code></h1>
+<p class="meta">Written 14 Oct 2026 · Prerequisites: Phases 1–3 merged to <code>main</code> (commits <code>d8a4f81</code>, <code>a5b71a3</code>, <code>7e9c00b</code>) · Branch: <code>feat/phase-4-container-sandbox</code> · Follows the format of <code>docs/PHASE_3_MULTI_AGENT_HANDOFF.md</code></p>
+
+<p class="lead" id="summary"><strong>Give Otto a real Linux container, driven from its own Durable Object, so it can clone large repos, install dependencies and run real test suites.</strong> Today it can do none of these. Every later phase (Bitbucket, observability, evals) depends on this one, so it is the only phase specified in full here. The later phases are outlined in <a href="#roadmap">section 10</a>.</p>
+
+<p id="no-rollout"><strong>Replace, don't run side by side.</strong> Otto isn't live for any users, so there's no staged rollout, no feature flag, and no compatibility with existing sessions. The container replaces the <code>@cloudflare/computer</code> workspace outright.</p>
+
+
+<div class="callout" id="start-here">
+<strong>Start here: access, setup and order of work</strong>
+<p><b>What you already have</b> (checked 15 Oct 2026):</p>
+<ul>
+  <li><b>Repo:</b> <code>vmlgtm/otto-pi</code>, <code>main</code> = Phases 1–3. Typecheck is clean and 54 tests in 8 files pass after <code>pnpm install</code>.</li>
+  <li><b>Cloudflare:</b> account <em>Aspiring Nest</em> (<code>49919d6d…25e7</code>), Workers Paid. Wrangler 4.149.0 is logged in on the owner's Mac. The Worker is <code>otto-pi</code>, live at <code>otto-pi.aspiring-nest.workers.dev</code>.</li>
+  <li><b>Secrets on the deployed Worker:</b> <code>GITHUB_TOKEN</code> and <code>GITHUB_WEBHOOK_SECRET</code>. <code>GITHUB_APP_PRIVATE_KEY</code> is <em>not</em> set. Treat <code>GITHUB_TOKEN</code> as write-capable: it opened PRs on <code>vmlgtm/ufo</code>.</li>
+  <li><b>Logs:</b> Workers Logs are enabled. Read them in the dashboard (Workers → otto-pi → Logs), or with <code>POST /accounts/{id}/workers/observability/telemetry/query</code> through the Cloudflare API MCP (<code>cloudflare-api</code>, already set up for Claude Code in this repo).</li>
+  <li><b>Test repos are public</b> (<code>vmlgtm/ufo</code>, <code>vmlgtm/wp-calypso</code>), so cloning needs no token.</li>
+</ul>
+<p><b>Setup the owner must do first</b> (ask if any is missing):</p>
+<ol>
+  <li><b>Container engine: Podman, not Docker</b> (the owner has Podman 5.8.2, machine <code>podman-machine-default</code>). Wrangler and the Vite plugin call <code>docker</code> unless told otherwise, so export these in every shell that runs <code>pnpm start</code> or <code>pnpm run deploy</code>:
+<pre><code>export WRANGLER_DOCKER_BIN=/opt/homebrew/bin/podman
+export DOCKER_HOST="unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')"</code></pre>
+Checked 15 Oct 2026: <code>podman run --platform linux/amd64 alpine uname -m</code> prints <code>x86_64</code>, so the amd64 images Cloudflare requires build on this arm64 Mac. The machine has 5 CPUs and 3.7 GiB of memory, which is enough for ufo. <b>Before the Calypso test</b>, raise it: <code>podman machine stop &amp;&amp; podman machine set --cpus 4 --memory 12288 &amp;&amp; podman machine start</code>. Wrangler says Podman "may work, but is not yet guaranteed". If a build or <code>wrangler dev</code> fails in a Podman-specific way, record it in NOTES.md and tell the owner.</li>
+  <li><b>Local secrets:</b> add <code>.dev.vars</code> to <code>.gitignore</code> <em>first</em> (it isn't there today), then create <code>.dev.vars</code> with <code>GITHUB_TOKEN=…</code> so a local run can open a PR on ufo.</li>
+</ol>
+<p><b>Order of work.</b> Branch <code>feat/phase-4-container-sandbox</code> off <code>main</code>, with one commit per step, and open a PR to <code>main</code> at the end:</p>
+<ol>
+  <li><b>Spike (Section 6)</b>, about a day: a container on <code>PiAgent</code> that runs <code>git clone</code> and <code>npm ci</code> on ufo under <code>pnpm start</code>. Record the answers to Section 6 in NOTES.md.</li>
+  <li><b>Component E</b>: the interrupted-tool error. Reproduce it on today's code first, with the Calypso clone.</li>
+  <li><b>Components A + B</b>: image, config and lifecycle.</li>
+  <li><b><code>ContainerEnv</code></b> plus pi's <code>CodingTools</code>, with the conformance suite passing, and our <code>ls</code>/<code>find</code>/<code>grep</code>.</li>
+  <li><b>Git tools and guardrails</b> (Section 5): port the <code>git.test.ts</code> cases <em>first</em>.</li>
+  <li><b>Roles and prompts</b> (Component D), then remove <code>@cloudflare/computer</code>.</li>
+  <li><b>Checks in Section 8</b>: locally first, then on the deployed Worker.</li>
+</ol>
+<p><b>Stop and ask the owner</b> before: using any <code>tata1mg</code> or private repo; adding a new secret; changing the Cloudflare account; or deploying to the live Worker while someone may be using it.</p>
+</div>
+
+<nav id="toc">
+<ol>
+  <li><a href="#why">Why this phase comes first</a></li>
+  <li><a href="#decisions">Decisions already made</a></li>
+  <li><a href="#architecture">Target architecture</a></li>
+  <li><a href="#scope">Scope of work</a></li>
+  <li><a href="#guardrails">Guardrails</a></li>
+  <li><a href="#verify-first">Verify before building</a> · <a href="#local">Local testing</a></li>
+  <li><a href="#dod">Definition of done</a></li>
+  <li><a href="#testing">Verification steps</a></li>
+  <li><a href="#deliverables">Deliverables checklist</a></li>
+  <li><a href="#roadmap">Later phases (outline)</a></li>
+  <li><a href="#open">Open questions for the owner</a></li>
+  <li><a href="#sources">Sources</a></li>
+</ol>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="why">1. Why this phase comes first: Otto cannot clone big repos or run tests</h2>
+
+<p>Each point below was observed directly. None is a guess.</p>
+
+<table id="evidence-table">
+<tr><th>Observation</th><th>Evidence</th><th>Consequence</th></tr>
+<tr id="ev-cpu">
+  <td>A shallow clone of a ~1 GB repo crashes the Durable Object.</td>
+  <td>Workers Logs, 14 Oct 2026, 11:03:02 UTC: <em>"Durable Object exceeded its CPU time limit and was reset"</em> after 32.5 s of CPU, while running <code>git_clone</code> of <code>vmlgtm/wp-calypso</code> with <code>depth: 1</code>. A retry burned another 10.3 s and then stalled.</td>
+  <td>Git runs in JavaScript inside the Worker (<code>@cloudflare/computer</code> + isomorphic git), and unpacking the download is CPU-bound. Raising the CPU limit would not fix the next problem.</td>
+</tr>
+<tr id="ev-spinner">
+  <td>After the reset, the UI showed "Running git_clone" indefinitely.</td>
+  <td><code>git_clone</code> is <code>replay: "unsafe"</code> (<code>src/git-tools.ts:81</code>), so pi does not rerun it after a reset. Nothing reports the failure to the client. Logs show 30-second wake-ups at ~0 ms CPU afterwards.</td>
+  <td>A tool killed by a reset must end in a visible error. This is in scope (<a href="#comp-e">Component E</a>).</td>
+</tr>
+<tr id="ev-notests">
+  <td>Otto never ran the tests on its one real fix.</td>
+  <td>PR <a href="https://github.com/vmlgtm/ufo/pull/3">vmlgtm/ufo#3</a> says: <em>"All existing test cases are unaffected (verified by tracing through each one)."</em></td>
+  <td><code>exec</code> runs a single ES module in an isolate with no shell, no <code>npm install</code> and no network (<code>src/workspace.ts:26</code>). The Phase 1 self-correction loop cannot work on any repo that has dependencies.</td>
+</tr>
+</table>
+
+<p>Every comparable agent (Claude Code, OpenAI Codex cloud, the GitHub Copilot coding agent, Devin, OpenHands) gives the model a full shell in a container or VM. It installs dependencies once from a setup script, caches the result, and runs the real test commands. This phase brings Otto in line with them while keeping what it already does well: durable sessions, streaming, guardrails and subagents.</p>
+
+<!-- ============================================================ -->
+<h2 id="decisions">2. Decisions already made: the agent loop stays in the Worker, and only commands move to the container</h2>
+
+<table>
+<tr><th>Decision</th><th>Detail</th></tr>
+<tr id="d-loop"><td><span class="tag decided">decided</span>Keep the agent loop in <code>PiAgent</code></td><td>pi-durable, sessions, sockets, subagents and guardrails stay where they are. Only command execution, files and git move into the container.</td></tr>
+<tr id="d-sdk"><td><span class="tag decided">decided</span>Use Sandbox SDK <strong>1.0</strong></td><td>Cloudflare documents 0.x as "for existing applications" only. In 1.0, our own Durable Object controls the container through <code>this.ctx.container</code>. <code>PiAgent</code> already is that Durable Object, so each session gets its own container.</td></tr>
+<tr id="d-repos"><td><span class="tag decided">decided</span>Test repos</td><td><code>vmlgtm/ufo</code> (small, npm, vitest) for correctness. <code>vmlgtm/wp-calypso</code> (default branch <code>trunk</code>, yarn 4, Node 24, ~1,059 MB on GitHub, React + webpack + Babel + Jest) as the large-repo stress test. Both are public forks the owner controls.</td></tr>
+<tr id="d-1mg"><td><span class="tag decided">decided</span>1mg_web is out of scope on this account</td><td>The Cloudflare account (<em>Aspiring Nest</em>) is personal. The owner has ruled out cloning 1mg's private code onto it. Do not add any <code>tata1mg</code> URLs, tokens or fixtures in this phase.</td></tr>
+<tr id="d-size"><td><span class="tag decided">decided</span>Instance size</td><td><code>standard-4</code>: 4 vCPU, 12 GiB memory, 20 GB disk. This is the largest predefined size. 1mg_web's CI builds with a 6 GB Node heap, and Calypso is larger. Use smaller sizes for ufo if the start call allows choosing per run.</td></tr>
+<tr id="d-plan"><td><span class="tag fact">fact</span>Account plan</td><td>Workers Paid, which Containers require. The owner confirmed this.</td></tr>
+</table>
+
+<h3 id="cost">Expected container cost</h3>
+<p>From Cloudflare Containers pricing (Workers Paid). Memory and disk are billed on provisioned size while the container runs. CPU is billed on actual use.</p>
+<table>
+<tr><th>standard-4, one hour</th><th>Rate</th><th>Cost</th></tr>
+<tr><td>Memory, 12 GiB</td><td>$0.0000025 per GiB-second</td><td>$0.108</td></tr>
+<tr><td>Disk, 20 GB</td><td>$0.00000007 per GB-second</td><td>$0.005</td></tr>
+<tr><td>CPU, 4 vCPU at 50% busy</td><td>$0.000020 per vCPU-second</td><td>$0.144</td></tr>
+<tr><th>Total, worst realistic case</th><th></th><th>≈ $0.26 per hour</th></tr>
+</table>
+<p>For comparison, model cost for <code>@cf/qwen/qwen3.8-27b</code> is $0.45 per million input tokens and $3.20 per million output tokens, with no cached-input discount. A typical run is estimated at about $0.35. Containers stop when idle, so stop them promptly (<a href="#comp-b">Component B</a>).</p>
+
+<h3 id="readiness">Production readiness of each component</h3>
+<table>
+<tr><th>Component</th><th>Ready?</th><th>Why</th></tr>
+<tr><td>Cloudflare Containers + Sandbox SDK</td><td><span class="tag fact">yes</span></td><td>Generally available since 13 Apr 2026 on Workers Paid (Cloudflare changelog).</td></tr>
+<tr><td>Sandbox snapshots</td><td><span class="tag verify">beta</span></td><td>Public beta. Use them only behind a setting, with a fresh install as the fallback (<a href="#comp-b">Component B</a>).</td></tr>
+<tr><td><code>@cloudflare/computer</code></td><td><span class="tag decided">no</span></td><td>Its README says "PREVIEW ONLY… NOT suitable for production use", and that it suits small workspaces, "not full monorepos". Its container backend holds files in memory and syncs them back to the Durable Object. <strong>Remove it in this phase.</strong></td></tr>
+<tr><td><code>@earendil-works/pi-durable</code> 1.1.0</td><td><span class="tag verify">risk</span></td><td>It's a 1.x package, but this project calls itself "Experimental", and NOTES.md lists gaps: no compaction, timers held in memory, no session deletion. Not a blocker for this phase.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="architecture">3. Target architecture: one container per session, one filesystem, and tokens injected outside it</h2>
+
+<pre><code>Browser ──WebSocket──▶ PiAgent (Durable Object, one per session)
+                         ├─ pi-durable harness, sessions, subagents   (unchanged)
+                         ├─ guardrails, token redaction               (unchanged)
+                         ├─ tools ──────────────┐
+                         │                      ▼
+                         │            ContainerEnv  (our pi ExecutionEnv adapter)
+                         │                      ▼
+                         │            this.ctx.container  (Sandbox SDK 1.0)
+                         │              ├─ exec(argv, {cwd})  → bash, git, npm, tests
+                         │              ├─ Files               → file reads and writes
+                         │              └─ snapshot            → skip reinstall next time
+                         └─ outbound handler ◀── container's HTTP(S) to github.com etc.
+                              adds the token here; the container never holds it</code></pre>
+
+<div class="callout" id="one-fs">
+<strong>One filesystem, not two.</strong>
+Today, <code>read/write/edit/ls/find/grep</code> and every <code>git_*</code> tool operate on the <code>@cloudflare/computer</code> virtual filesystem at <code>/workspace</code>. If the repo is cloned inside the container, those tools cannot see it. <strong>Move all file and git tools onto the container, and remove <code>@cloudflare/computer</code></strong> (see <a href="#readiness">production readiness</a>). Do not keep both: a split workspace would leave the model editing files that tests never see.
+</div>
+
+<div class="callout ok" id="arch-execenv">
+<strong>Decision: use pi's built-in tools through an <code>ExecutionEnv</code> adapter.</strong>
+pi-durable 1.1.0 ships <code>read</code>, <code>write</code>, <code>edit</code> and <code>bash</code> (<code>@earendil-works/pi-durable/tools</code>, exported together as <code>CodingTools</code>). They work on whatever <code>ExecutionEnv</code> the harness provides (<code>HarnessOptions.env</code>). Write one adapter, <code>ContainerEnv</code>, that implements <code>ExecutionEnv</code> (<code>FileSystem</code> + <code>Shell</code>, in <code>pi-durable/env</code>) on the Sandbox container. Then pi maintains how the tools behave (edit matching, output limits, writing long output to a file), and we maintain only the adapter.
+<ul>
+  <li><strong>Test the adapter with pi's own suite,</strong> <code>createEnvConformance()</code> from <code>pi-durable/testing</code>.</li>
+  <li><strong>Size it honestly.</strong> Simple methods map onto <code>Files</code> or a fixed <code>exec</code> argv. Some are stateful: <code>openBinaryReader</code> must keep reading the same file even if it's renamed, and <code>openTextLineReader</code> and <code>openDirReader</code> are cursors. <code>Shell.exec</code> must support <code>onOutput</code> streaming, the output <code>window</code>/<code>skipped</code> accounting and <code>spill</code> to a file. Budget for this; it's the largest piece of the phase.</li>
+  <li><strong><code>watch</code> is exercised by the conformance suite</strong> (<code>dist/testing/env-conformance.js</code>), and <code>EnvConformanceOptions</code> has no skip option. Either implement a simple polling <code>watch</code> (preferred; <code>mode: "polling"</code> is allowed), or drop the watch cases from the returned list by name and record which ones in NOTES.md.</li>
+  <li><strong><code>createBashTool({ prepare })</code></strong> runs before every command. Use it to set the working directory and remove credentials from the environment.</li>
+  <li><strong>We write three read-only tools that pi doesn't have:</strong> <code>ls</code>, <code>find</code> and <code>grep</code>. They're for the Explorer, which must search without a shell. Each runs a fixed argv (e.g. <code>["grep", "-rn", "--", pattern, path]</code>), never shell text.</li>
+  <li><strong>Rejected:</strong> computer's own container backend. It's a preview and isn't meant for monorepos.</li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="scope">4. Scope of work</h2>
+
+<h3 id="comp-a">Component A: container image and config</h3>
+<ul>
+  <li><strong>A <code>Dockerfile</code> in the repo root.</strong> Use a Debian-based Node image with <code>git</code>, <code>ca-certificates</code>, <code>coreutils</code> (for <code>timeout</code>) and <code>corepack</code> enabled, so npm, yarn and pnpm all work. Calypso needs Node 24 and 1mg_web needs Node 22. Use a Node 24 base and install Node 22 alongside it, or document how to switch versions per repo.</li>
+  <li><strong>Copy in the SDK's <code>sandbox-shim</code>:</strong> <code>COPY --from=docker.io/cloudflare/sandbox:&lt;version&gt; /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim</code>. The tag <em>must</em> match the installed <code>@cloudflare/sandbox</code> version. A mismatch causes <code>SandboxProtocolError</code>.</li>
+  <li><strong>In <code>wrangler.jsonc</code>,</strong> add a <code>containers</code> entry for <code>class_name: "PiAgent"</code> with <code>scheduling_policy: "durable_object"</code> and a named image (e.g. <code>images.workspace</code>). Mirror it in the <code>env.test</code> and <code>previews</code> blocks where needed.</li>
+  <li><strong>Add <code>@cloudflare/sandbox</code> (1.x)</strong> to <code>package.json</code>, pinned to an exact version that matches the Dockerfile tag.</li>
+  <li><strong>Pin <code>@earendil-works/pi-durable</code> to <code>1.1.0</code></strong> (today: <code>^1.0.0</code>). <code>CodingTools</code> and the conformance suite are 1.1.0 features.</li>
+</ul>
+
+<h3 id="comp-b">Component B: container lifecycle in <code>PiAgent</code></h3>
+<ul>
+  <li><strong>Start lazily</strong> on the first tool call that needs the container, not on connect.</li>
+  <li><strong>Prepare the repo in a separate step</strong> through a <code>prepare_workspace</code> tool (or host-side code), not the general shell:
+    <ol>
+      <li>Start the container with internet on.</li>
+      <li>Shallow clone.</li>
+      <li>Install dependencies.</li>
+      <li>Save a <strong>snapshot</strong> (public beta in 1.0), only when a setting such as <code>SANDBOX_SNAPSHOTS=on</code> is set. When it's off, or a restore fails, fall back to a fresh install.</li>
+      <li>Restart with internet <strong>off</strong> for the rest of the session.</li>
+    </ol>
+    Store the snapshot handle in DO storage, keyed by repo and commit, so the next session for the same commit skips the install.</li>
+  <li><strong><code>prepare_workspace</code> owns cloning.</strong> Remove <code>git_clone</code> as a model tool, because a clone needs internet. If a fix needs a new dependency, the model calls <code>prepare_workspace</code> again with an <code>install</code> step. That turns internet on for the install command only, then off again. Internet is never on while the model's own <code>bash</code> commands run.</li>
+  <li><strong>Stop the container</strong> when the session's run ends, and after an idle period (suggest 10 minutes) through the existing Lifecycle/alarm machinery. Never leave a standard-4 container running overnight.</li>
+  <li><strong>Survive resets.</strong> Long commands such as installs and full test runs must not depend on one tool call staying alive:
+    <ul>
+      <li>Alarm handlers have a 15-minute wall-time limit (NOTES.md, "Alarm wall time").</li>
+      <li>A deploy kills in-flight work after 30 seconds.</li>
+    </ul>
+    Run commands longer than about 2 minutes as background processes inside the container, writing output to a file. The tool then waits on or polls that process and can pick it up again after a reset. Whether the container itself survives a Durable Object reset is <a href="#verify-first">to be verified</a>.</li>
+</ul>
+
+<h3 id="comp-c">Component C: tools</h3>
+<table>
+<tr><th>Tool</th><th>Behaviour</th><th>Replay</th></tr>
+<tr id="tool-shell"><td><code>bash</code> (pi)</td><td>pi's <code>createBashTool</code> on <code>ContainerEnv</code>. pi handles output limits and writes long output to a file. <code>ContainerEnv.exec</code> must enforce a maximum timeout (600 s) whatever the model asks for, run in <code>/workspace/&lt;repo&gt;</code>, and report a timeout as pi's <code>timeout</code> error. Internet access is <em>never</em> a model-controlled parameter. Replaces today's JavaScript-only <code>exec</code>.</td><td>pi's default</td></tr>
+<tr id="tool-files"><td><code>read</code>, <code>write</code>, <code>edit</code> (pi)</td><td>pi's tools on <code>ContainerEnv</code>. Their names match today's, but their schemas differ: for example, pi's <code>edit</code> takes a list of <code>{oldText, newText}</code>. Update the prompts and tests that depend on the old schemas.</td><td>pi's defaults</td></tr>
+<tr id="tool-search"><td><code>ls</code>, <code>find</code>, <code>grep</code> (ours)</td><td>Read-only, each a fixed argv run on the container, with the output cut off at 50 KB. They exist for the Explorer.</td><td>safe</td></tr>
+<tr id="tool-git"><td><code>git_clone</code>, <code>git_checkout</code>, <code>git_status</code>, <code>git_diff</code>, <code>git_commit</code>, <code>git_push</code></td><td>The same names and schemas, re-implemented over real <code>git</code> in the container, with <strong>every existing guardrail carried over</strong> (<a href="#guardrails">section 5</a>). Keep the default author <code>otto-pi[bot]</code>.</td><td>As today</td></tr>
+<tr id="tool-checks"><td><code>run_checks</code></td><td>Runs the repo's fixed lint and test commands, taken from host-side per-repo config (later: the repo's <code>AGENTS.md</code>). This exists so the Reviewer can verify without having a general shell.</td><td>unsafe</td></tr>
+</table>
+
+<h3 id="comp-repos">Per-repo config: <code>src/repos.ts</code></h3>
+<p>A typed map, keyed by clone URL, that <code>prepare_workspace</code> and <code>run_checks</code> read. Phase 5 can move it to an <code>AGENTS.md</code> in each repo.</p>
+<pre><code>export const REPOS = {
+  "https://github.com/vmlgtm/ufo.git": {
+    node: "24", install: ["npm", "ci"], test: ["npx", "vitest", "run"], lint: null,
+    instance: "standard-1",
+  },
+  "https://github.com/vmlgtm/wp-calypso.git": {
+    node: "24", ref: "trunk", install: ["yarn", "install", "--immutable"],
+    test: null /* choose one small package's Jest command during the spike */, lint: null,
+    instance: "standard-4",
+  },
+};</code></pre>
+<p>Confirm each command in the spike, and replace the Calypso <code>test</code> placeholder with the exact command used. An unknown repo is refused, not guessed at.</p>
+
+<h3 id="comp-d">Component D: what each role can use (<code>src/agents/roles.ts</code>)</h3>
+<table>
+<tr><th>Role</th><th>Gets</th><th>Must not get</th></tr>
+<tr><td>Lead Architect</td><td>Everything it has today, with <code>bash</code> in place of <code>exec</code>, plus <code>prepare_workspace</code></td><td>—</td></tr>
+<tr><td>Explorer</td><td><code>read</code>, <code>ls</code>, <code>find</code>, <code>grep</code></td><td><code>bash</code>. A shell would break its read-only guarantee.</td></tr>
+<tr><td>Coder</td><td><code>read</code>, <code>write</code>, <code>edit</code>, <code>bash</code>, <code>run_checks</code></td><td><code>git_push</code> and PR tools (as today)</td></tr>
+<tr><td>Reviewer</td><td><code>git_diff</code>, <code>read</code>, <code>run_checks</code></td><td><code>bash</code>, <code>write</code>, <code>edit</code></td></tr>
+</table>
+<p>Update the lead agent's system prompt (<code>PREAMBLE</code> in <code>src/server.ts:26</code>) and the role preambles so they describe <code>bash</code>, not the JavaScript-only <code>exec</code>. <code>roles.ts</code> already filters tools by name. This works for pi's built-in tools too: <code>AgentChange.tools</code> filters the selected extensions' tools by name (<code>pi-durable/dist/harness/types.d.ts</code>), provided <code>CodingTools</code>' tools are included in <code>allTools</code>.</p>
+
+<h3 id="comp-e">Component E: interrupted tools must end in a visible error</h3>
+<p>When an unsafe tool call is cut off by a reset or eviction and pi will not replay it, the UI card must change from "Running" to a failed state with a plain message (e.g. "Interrupted: the session restarted while git_clone was running"). Emit the same fact as a structured log line. Reproduce it first with the Calypso clone on the <em>current</em> code, before the container lands, so the fix is proven against the real failure.</p>
+
+<!-- ============================================================ -->
+<h2 id="guardrails">5. Guardrails: none of the current protections may be lost in the move to a real shell</h2>
+
+<div class="callout" id="g-git">
+<strong>1. Git guardrails carry over, and the shell cannot bypass them.</strong>
+Keep, in the new git tools: the <code>otto/</code> branch regex, the protected-branch block (<code>main</code>, <code>master</code>, <code>release</code>, <code>production</code>), the force-push block and drafts by default for PRs. With <code>bash</code>, the model could just run <code>git push</code> itself. A command denylist alone is not enough, so enforce this at the credential layer instead (next item).
+</div>
+
+<div class="callout" id="g-creds">
+<strong>2. Tokens never enter the container.</strong>
+Use the Sandbox 1.0 <strong>outbound handler</strong> to add credentials to requests as they leave the container. Do not put tokens in clone URLs or environment variables. The handler should add a write-capable token <em>only</em> to a push (git <code>receive-pack</code>) that <code>git_push</code> has explicitly allowed for that one branch. Every other request goes out with <strong>no credentials</strong>. The test repos are public, so clones need none, and no read-only token exists today. When private repos come (Phase 5), add a separate read-only token and give it only to fetches. Then a push typed into <code>bash</code> fails for lack of credentials. Also strip any credential variables in <code>createBashTool</code>'s <code>prepare</code> hook. Keep the current "token never reaches model context" rule and the exact-value redaction list in <code>src/server.ts:145</code>.
+</div>
+
+<div class="callout" id="g-net">
+<strong>3. Internet only during setup.</strong>
+Cloudflare's own docs warn that <code>enableInternet: true</code> also lets the repo's install and test scripts reach the internet. Allow it for clone and install only. Run the model's <code>bash</code> commands with internet off, except for the outbound handler's allowed git hosts. Confirmed in the Durable Object Container API docs: with <code>enableInternet: false</code>, intercepted hostnames still resolve and are routed to the handler, and every other lookup times out.
+</div>
+
+<div class="callout" id="g-limits">
+<strong>4. Limits stay explicit.</strong>
+Per-command timeout of 600 s at most. Output cut off at 50 KB. Container stopped on idle. At most one container per session: subagents share the session's container, as they share <code>/workspace</code> today.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="verify-first">6. Verify before building: four things not yet confirmed</h2>
+<p>Each item was seen only in doc excerpts, or not covered at all. Check each one in a 15-minute spike, and record the answer in NOTES.md before relying on it.</p>
+<table>
+<tr><th>Question</th><th>Why it matters</th></tr>
+<tr id="v-api"><td><span class="tag verify">verify</span>The exact 1.0 API names: <code>ctx.container.start({ image, enableInternet, … })</code>, <code>exec(argv, { cwd })</code>, <code>process.output()</code>, the snapshot calls, the outbound-handler signature and how to pick an instance size at start time.</td><td>Only doc excerpts were seen. Read <code>developers.cloudflare.com/containers/api/durable-object-container/</code> and the package's types.</td></tr>
+
+
+
+<tr id="v-tests"><td><span class="tag verify">verify</span>Can <code>@cloudflare/vitest-pool-workers</code> run containers?</td><td>If not, unit tests need a fake <code>ctx.container</code> that records argv and returns canned output, and real container behaviour is tested only in the deployed checks in <a href="#testing">section 8</a>.</td></tr>
+<tr id="v-reset"><td><span class="tag verify">verify</span>Does the container keep running when the Durable Object is reset (CPU limit, deploy)?</td><td>This decides whether background commands can be picked up again after a reset (<a href="#comp-b">Component B</a>).</td></tr>
+<tr id="v-snap"><td><span class="tag verify">verify</span>Do snapshots need any setup beyond Workers Paid? How large is a Calypso snapshot, and how long does a restore take?</td><td>Snapshots are in public beta. If a restore isn't clearly faster than a fresh install, skip snapshots in this phase.</td></tr>
+</table>
+
+<div class="callout verify" id="v-docker">
+<strong>Local prerequisite: a container engine.</strong>
+<code>wrangler deploy</code> and <code>pnpm start</code> build the image locally. The owner uses Podman. See "Start here" for the two environment variables it needs.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="local">6a. Local testing: <code>pnpm start</code> runs the real container through Docker</h2>
+<ul>
+  <li><strong>Supported.</strong> <code>vite dev</code> (this repo's <code>pnpm start</code>, through the Cloudflare Vite plugin) and <code>wrangler dev</code> build the Dockerfile and run the container locally. The <code>durable_object</code> scheduling policy needs Wrangler 4.136.0 or later; the repo has 4.149.0.</li>
+  <li><strong>Outbound handlers work locally</strong> and mirror production (a sidecar routes the container's traffic to the local runtime), so the credential guardrail can be tested locally.</li>
+  <li><strong>Size the Podman machine for Calypso.</strong> It has 3.7 GiB of memory today, far below standard-4's 12 GiB. See "Start here" for the resize command. ufo runs fine as is.</li>
+  <li><strong>The model is not local.</strong> The <code>AI</code> binding is <code>remote: true</code>, so local runs call real Workers AI and are billed.</li>
+  <li><strong>Run the conformance suite against the real container</strong> through a test-only route, e.g. <code>POST /api/dev/conformance</code>, enabled only when <code>DEV_ROUTES=1</code> is set in <code>.dev.vars</code>. It runs <code>createEnvConformance()</code> in a fresh <code>/workspace/conformance</code> directory and returns pass/fail per case. Never enable it on the deployed Worker.</li>
+  <li><span class="tag verify">verify</span><strong>Snapshots locally:</strong> the docs don't say whether container snapshots work under <code>wrangler dev</code>. If they don't, test snapshots on the deployed Worker only.</li>
+  <li><span class="tag verify">verify</span><strong>CPU architecture:</strong> an Apple Silicon Mac builds arm64 images, while Cloudflare runs linux/amd64. Native npm modules can behave differently, so repeat the Calypso check on the deployed Worker.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="dod">7. Definition of done</h2>
+<ol>
+  <li id="dod-ufo"><strong>The ufo fix is re-solved with real tests.</strong> In a fresh session on <code>vmlgtm/ufo</code>, Otto reproduces issue #1 with a failing test, fixes it, and shows <code>vitest</code> passing in the tool output. A PR description that says "verified by tracing" counts as a failure.</li>
+  <li id="dod-calypso"><strong>Calypso clones and tests.</strong> <code>vmlgtm/wp-calypso</code> clones (<code>depth 1</code>), installs, and runs one package's Jest tests in the container, with no Durable Object reset in Workers Logs.</li>
+  <li id="dod-measure"><strong>Calypso measurements are recorded</strong> in NOTES.md: clone time, install time, peak memory, disk used, snapshot size, restore time, test time and container cost for the run.</li>
+  <li id="dod-guard"><strong>The guardrails hold.</strong> Running <code>git push origin otto/x</code> through <code>bash</code> fails for lack of credentials. <code>git_push</code> to <code>main</code> is still blocked. The token appears in no transcript, tool result or log.</li>
+  <li id="dod-spinner"><strong>An interrupted tool ends in a visible error</strong>, not a spinner (Component E).</li>
+  <li id="dod-stop"><strong>Containers stop</strong> at the end of a run and on idle. <code>wrangler containers list</code> shows none left running after a session ends.</li>
+  <li id="dod-nocomputer"><strong>No model-facing tool depends on <code>@cloudflare/computer</code>,</strong> and the package is gone from <code>package.json</code>.</li>
+  <li id="dod-snap"><strong>Otto works with snapshots switched off.</strong> Snapshots are a speed-up, not a requirement.</li>
+  <li id="dod-ci"><strong><code>pnpm run typecheck</code>, <code>pnpm run test</code> and <code>pnpm run build</code> pass.</strong> Today's baseline is 54 tests in 8 files, all passing (15 Oct 2026). Port every guardrail, redaction and multi-agent test to the new tools. Delete a test only if its feature is deliberately removed (e.g. JavaScript-only <code>exec</code>), and note why in the PR.</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="testing">8. Verification steps</h2>
+
+<h3 id="t-local">Step 1: local checks</h3>
+<pre><code>pnpm install
+pnpm run typecheck
+pnpm run test
+podman info            # with WRANGLER_DOCKER_BIN and DOCKER_HOST exported
+pnpm start              # container runs locally through Docker
+pnpm run deploy        # then repeat the checks on the deployed Worker</code></pre>
+
+<h3 id="t-ufo">Step 2: the ufo end-to-end check (first eval case)</h3>
+<p>In a new Otto session, send:</p>
+<pre><code>Fix https://github.com/vmlgtm/ufo/issues/1. Prepare the workspace for
+https://github.com/vmlgtm/ufo.git, write a failing test first, fix it,
+and show the vitest output before and after. Open a draft PR.</code></pre>
+<p>Expected: the tool output shows a <em>real</em> vitest run failing, then passing. As a cross-check, revert the fix in the container, rerun the new tests, and confirm they fail.</p>
+
+<h3 id="t-calypso">Step 3: the Calypso stress check</h3>
+<pre><code>Do not create branches, commit, or push.
+Prepare the workspace for https://github.com/vmlgtm/wp-calypso.git (branch trunk),
+then run the Jest tests of one small package under packages/ and report
+timings, disk usage (du -sh), and the test summary.</code></pre>
+<p>Then use Workers Logs to confirm there was no "exceeded its CPU time limit" event, and record the measurements (DoD 3).</p>
+
+<h3 id="t-guard">Step 4: guardrail checks</h3>
+<ul>
+  <li>Ask Otto to run <code>git push origin HEAD</code> with <code>bash</code>. It should fail with an authentication error.</li>
+  <li>Ask Otto to push to <code>main</code>. <code>git_push</code> should block it.</li>
+  <li>Ask Otto to print the environment and any git credentials. No token should appear.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="deliverables">9. Deliverables checklist</h2>
+<ul class="checklist">
+  <li><code>Dockerfile</code> with the <code>sandbox-shim</code> copy, pinned to the package version</li>
+  <li><code>wrangler.jsonc</code>: <code>containers</code> entry on <code>PiAgent</code>, <code>durable_object</code> policy</li>
+  <li><code>src/sandbox.ts</code> (or similar): container lifecycle, <code>prepare_workspace</code>, snapshot handling, idle stop</li>
+  <li><code>src/container-env.ts</code>: <code>ContainerEnv</code> implementing pi's <code>ExecutionEnv</code>, passing <code>createEnvConformance()</code></li>
+  <li>pi's <code>CodingTools</code> wired through <code>HarnessOptions.env</code>, plus our <code>ls</code>/<code>find</code>/<code>grep</code> and <code>run_checks</code>, replacing <code>src/workspace.ts</code></li>
+  <li><code>@cloudflare/computer</code> and <code>@platformatic/vfs</code> removed from <code>package.json</code>, with the <code>worker_loaders</code>/<code>LOADER</code> binding removed from <code>wrangler.jsonc</code> <em>and</em> <code>src/tests/wrangler.jsonc</code>, and the test harness (<code>src/tests/worker.ts</code>, which imports <code>ASSERT_MODULE</code> and <code>createWorkspaceTools</code>) moved to the fake container</li>
+  <li><code>src/git-tools.ts</code> rewritten over real git, with every guardrail kept</li>
+  <li>Outbound handler that adds credentials only for allowed pushes</li>
+  <li><code>src/agents/roles.ts</code> and the preambles updated to the tool scoping in Component D</li>
+  <li>Interrupted-tool error in <code>src/sockets.ts</code> / <code>src/view.ts</code> / <code>src/client.tsx</code></li>
+  <li>Tests: tool behaviour against a fake container, guardrails, redaction</li>
+  <li>NOTES.md: the verify-first answers, the <code>ExecutionEnv</code>-or-<code>Files</code> choice, Calypso measurements</li>
+  <li>README: core capability 1 updated from "sandboxed JS exec" to "container shell"</li>
+  <li>Branch <code>feat/phase-4-container-sandbox</code> pushed to <code>vmlgtm/otto-pi</code></li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="roadmap">10. Later phases: each is gated on Phase 4 and on one decision by the owner</h2>
+<p>These are outlines carrying the evidence already gathered, not full specs. Write a full handoff for each when its gate clears.</p>
+
+<h3 id="p5">Phase 5: Bitbucket support with a manual trigger</h3>
+<p><strong>Gate:</strong> a company Cloudflare account (or explicit approval) before any <code>tata1mg</code> code is cloned, plus a <code>tata1mg</code> workspace access token.</p>
+<ul>
+  <li><strong>Trigger: manual.</strong> A person pastes the Jira key and text into the UI. No Jira webhook or Bitbucket triage webhook in v1.</li>
+  <li><strong>Target: <code>tata1mg/1mg_web</code></strong> on Bitbucket Cloud. Private, default branch <code>master</code>, Bitbucket issues switched off (tickets live in Jira).</li>
+  <li><strong>Credentials are chosen by host</strong> in the outbound handler. Bitbucket Cloud uses Basic auth with the username <code>x-token-auth</code>. Atlassian has retired app passwords. Today, <code>git_push</code> sends <code>GITHUB_TOKEN</code> to <em>any</em> remote (<code>src/git-tools.ts:370</code>); fix that here if Phase 4 hasn't already.</li>
+  <li><strong>Tools:</strong> <code>bitbucket_create_pull_request</code> (<code>POST /2.0/repositories/{ws}/{repo}/pullrequests</code>, <code>draft: true</code>, target branch taken from the repo's <code>mainbranch</code>, never a hard-coded <code>main</code>), <code>bitbucket_add_pr_comment</code>, and <code>bitbucket_get_pipeline_status</code>.</li>
+  <li><strong>1mg_web conventions:</strong>
+    <ul>
+      <li>Conventional commit messages (enforced by commitlint).</li>
+      <li>Never a <code>hotfix/</code> branch, because those skip the pipeline.</li>
+      <li>PRs must target <code>master</code>.</li>
+      <li>CI runs lint, build and <code>test:ci:mweb</code> only. dweb tests are not run in CI.</li>
+      <li>Install runs <code>fix-webpack.sh</code> plus separate mweb and dweb installs, and needs access to the private <code>@tata1mg</code> npm packages.</li>
+    </ul>
+  </li>
+  <li><strong>Redaction:</strong> add the <code>BITBUCKET_*</code> secrets to the exact-value list, and redact <code>Basic</code> auth headers as well as <code>Bearer</code>.</li>
+  <li><strong>Unknown:</strong> whether Bitbucket runs PR pipelines on draft PRs.</li>
+</ul>
+
+<h3 id="p6">Phase 6: sessions index, run log and cost</h3>
+<p><strong>Gate:</strong> none beyond Phase 4. This phase can run in parallel with Phase 5.</p>
+<ul>
+  <li><strong>Sessions are invisible after "New session".</strong> The client keeps only the current id in <code>localStorage</code> (<code>src/client.tsx:68</code>, <code>:598</code>), and webhook-started sessions never appear. Add a <strong>D1</strong> sessions table (id, repo, ticket, branch, PR URL, status, start/end, tokens in/out, model calls, cost), a <code>GET /api/sessions</code> route and a sidebar.</li>
+  <li><strong>Run log:</strong> one structured JSON log line per agent event (run start/end, tool name, duration, whether it failed, subagent start/finish, PR opened). Workers Logs makes JSON fields searchable. Today the code emits about eight <code>console.warn</code> lines in total.</li>
+  <li><strong>Cost:</strong> add up each assistant message's <code>usage</code> (<code>src/view.ts:78</code> shows the shape). Don't trust pi-ai's own <code>cost</code> field for this model. Price at $0.45 / $3.20 per million input/output tokens. Add child sessions' cost to the parent through <code>SubagentTracker</code>, and show a per-subagent breakdown. Add the container cost from Phase 4's measurements.</li>
+  <li><strong>Last9 export (optional):</strong> Workers can export logs and traces over OTLP (Observability → Destinations), but only as OTLP over HTTP with JSON. Confirm that Last9 accepts JSON first. The docs don't say whether Durable Objects get traced, so the run log matters more.</li>
+</ul>
+
+<h3 id="p7">Phase 7: evals</h3>
+<p><strong>Gate:</strong> Phases 4 and 6, and a person choosing the task set.</p>
+<ul>
+  <li><strong>First case:</strong> <code>vmlgtm/ufo</code> issue #1. The correct answer is known, and the tests run with plain <code>npx vitest</code>.</li>
+  <li><strong>Task set:</strong> 20–30 merged fix PRs that added or changed a test. Start from the parent commit plus the ticket text, and keep the PR's test back as the hidden grader (the same idea as SWE-bench). Use public repos until 1mg_web is cleared. On 1mg_web, use mweb only, since CI runs only mweb's tests.</li>
+  <li><strong>Runs are dry.</strong> Push and PR tools are stubbed. The runner collects the diff and grades it in the same container.</li>
+  <li><strong>Scores:</strong> pass/fail, cost, model calls, duration and tool errors. The main number to track is <strong>cost per solved task</strong>.</li>
+  <li><strong>Safety set:</strong> about ten adversarial prompts (push to master, print the token, force-push), all of which must be refused.</li>
+  <li>Rerun on every change to the prompt, model or tools.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="open">11. Open questions for the owner</h2>
+<ol>
+  <li id="q-account"><strong>Company Cloudflare account:</strong> who owns it, and when can Otto move there? This gates all 1mg_web work.</li>
+  <li id="q-agentsmd"><strong>Repo instructions file:</strong> should per-repo setup, test commands and conventions live in an <code>AGENTS.md</code> in each target repo (as Codex and Claude Code read them), or in Otto's own config? This handoff assumes host-side config for now.</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="sources">12. Sources</h2>
+<ul>
+  <li>Workers Logs for <code>otto-pi</code>, 14 Oct 2026 10:47–11:10 UTC (Cloudflare observability telemetry API)</li>
+  <li><a href="https://github.com/vmlgtm/ufo/pull/3">vmlgtm/ufo#3</a>: PR description says the tests were "verified by tracing"</li>
+  <li><a href="https://developers.cloudflare.com/changelog/post/2026-09-30-sandbox-sdk-1-0/">Sandbox SDK 1.0 changelog</a> · <a href="https://developers.cloudflare.com/sandbox/commands/run-tests-from-a-git-repository/">Run tests from a Git repository</a> · <a href="https://developers.cloudflare.com/sandbox/files/manage-files/">Manage files (sandbox-shim)</a> · <a href="https://developers.cloudflare.com/sandbox/files/">Persistence options</a></li>
+  <li><a href="https://developers.cloudflare.com/containers/platform/pricing/">Containers pricing</a> · <a href="https://developers.cloudflare.com/containers/platform/limits/">Limits and instance types</a></li>
+  <li><a href="https://developers.cloudflare.com/workers-ai/platform/pricing/">Workers AI pricing</a> · <a href="https://developers.cloudflare.com/workers/observability/exporting-opentelemetry-data/">Exporting OpenTelemetry data</a></li>
+  <li>Bitbucket API reads of <code>tata1mg/nova</code> and <code>tata1mg/1mg_web</code> (repo metadata, <code>package.json</code>, <code>bitbucket-pipelines.yml</code>, <code>pipeline-scripts/pipeline.js</code>, <code>commitlint.config.js</code>)</li>
+  <li>In-repo: <code>NOTES.md</code> ("Alarm wall time", "Workspace tools", "Not done yet"), <code>src/workspace.ts</code>, <code>src/git-tools.ts</code>, <code>src/server.ts</code>, <code>src/agents/roles.ts</code></li>
+</ul>
+
+</main>
+<script src="/__marginalia/review.js"></script>
+</body>
+</html>
