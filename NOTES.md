@@ -483,3 +483,28 @@ They are now unset (`env -u NAME`, `ContainerEnv`'s `unsetEnv`), not blank.
 
 Idle stop: run 1's container stopped at 11:23:21 UTC, about 9 to 10
 minutes after its last tool call, with no session open.
+
+### Deploying with Podman
+
+`wrangler deploy` failed twice before it worked (15 Oct 2026), both
+times at "Preparing workspace for Cloudflare Containers" with "The image
+is invalid or does not exist in this account":
+
+1. Podman builds OCI manifests by default.
+2. Podman recompresses layers when it pushes, so the digest it records
+   in RepoDigests (`b5299c…`) is not the manifest the registry got
+   (`8a97b5…`, read from the registry's v2 API). Wrangler takes the
+   pushed digest from `image inspect … RepoDigests`.
+
+`scripts/podman-as-docker.sh` now builds `--format docker`, pushes
+`--format v2s2 --digestfile`, and answers Wrangler's post-push RepoDigests
+inspect of a `registry.cloudflare.com` image with the saved digest. Deploy:
+
+```sh
+node scripts/podman-socket-proxy.mjs /tmp/otto-docker.sock &   # if not running
+export WRANGLER_DOCKER_BIN="$PWD/scripts/podman-as-docker.sh"
+export DOCKER_HOST=unix:///tmp/otto-docker.sock
+pnpm run deploy          # snapshots on: pnpm exec vite build && pnpm exec wrangler deploy --var SANDBOX_SNAPSHOTS:on
+```
+
+The first Phase 4 deploy (version d93cfdcd) used `--var SANDBOX_SNAPSHOTS:on`.
