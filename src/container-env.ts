@@ -23,7 +23,7 @@ import {
   type WatchTarget
 } from "@earendil-works/pi-durable/env";
 import { posix } from "node:path";
-import { MAX_COMMAND_SECONDS, type Sandbox } from "./sandbox";
+import { envArgs, MAX_COMMAND_SECONDS, type Sandbox } from "./sandbox";
 
 /** The helper baked into the image (container/otto-fs.mjs). */
 const HELPER = "/usr/local/lib/otto/otto-fs.mjs";
@@ -400,13 +400,13 @@ export class ContainerEnv implements ExecutionEnv {
       return err(new ExecutionError("spawn_error", error instanceof Error ? error.message : String(error)));
     }
 
-    const env = Object.entries(options?.env ?? {}).map(([key, value]) => `${key}=${value}`);
     const wrapped = [
       "env",
       // Absent, not empty: an empty GITHUB_TOKEN still reads as "a token is set".
       ...this.#unset.flatMap((name) => ["-u", name]),
-      ...(options?.inheritEnv === false ? ["-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"] : []),
-      ...env,
+      ...(options?.inheritEnv === false ? ["-i"] : []),
+      // The image's environment first (exec does not pass it on the platform), then the caller's.
+      ...envArgs(options?.env),
       "timeout",
       "-k",
       "5",

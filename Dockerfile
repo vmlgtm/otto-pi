@@ -24,6 +24,8 @@ COPY --from=docker.io/cloudflare/sandbox:1.0.1 /usr/local/bin/sandbox-shim /usr/
 
 # All egress is intercepted by the Worker (enableInternet: false), which terminates TLS
 # with this CA. Tools that keep their own trust store are pointed at it too.
+# On the deployed platform exec does not pass these to processes, so the sandbox sets
+# the same values on every command (IMAGE_ENV in src/sandbox.ts); keep the two in step.
 ENV CF_CA=/etc/cloudflare/certs/cloudflare-containers-ca.crt
 ENV GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt \
   NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt \

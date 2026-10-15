@@ -14,7 +14,31 @@ const RUN_OUTPUT_BYTES = 256 * 1024;
 const IDLE_JOB = "container-idle-stop";
 const STATE_KEY = "sandbox:workspace";
 const SNAPSHOT_PREFIX = "sandbox:snapshot:";
-const NODE22_PATH = "/opt/node22/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const NODE22_PATH = `/opt/node22/bin:${SYSTEM_PATH}`;
+/** Where the platform puts the CA that signs the egress gateway's TLS. */
+const EGRESS_CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
+const SYSTEM_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
+
+/**
+ * The image's environment, set on every command. On the deployed platform
+ * `exec` does not pass the Dockerfile's ENV to processes (it does under
+ * wrangler dev), and Node needs NODE_EXTRA_CA_CERTS to trust the gateway.
+ */
+export const IMAGE_ENV: Readonly<Record<string, string>> = {
+  PATH: SYSTEM_PATH,
+  HOME: "/root",
+  GIT_SSL_CAINFO: SYSTEM_BUNDLE,
+  NODE_EXTRA_CA_CERTS: SYSTEM_BUNDLE,
+  npm_config_cafile: SYSTEM_BUNDLE,
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
+  CI: "1"
+};
+
+/** `KEY=VALUE` arguments for `env`: the image's environment, then `extra`. */
+export function envArgs(extra: Record<string, string> = {}): string[] {
+  return Object.entries({ ...IMAGE_ENV, ...extra }).map(([key, value]) => `${key}=${value}`);
+}
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn"]);
 const INSTALL_VERBS = new Set(["install", "i", "add", "ci"]);
 
@@ -265,9 +289,12 @@ export class Sandbox extends LifecycleCapability {
     const process = await container.exec([
       "sh",
       "-c",
-      'for i in $(seq 1 40); do [ -s "$CF_CA" ] && break; sleep 0.5; done; ' +
-        'if [ -s "$CF_CA" ]; then cat "$CF_CA" >> /etc/ssl/certs/ca-certificates.crt; ' +
-        'else ls -la /etc/cloudflare /etc/cloudflare/certs 2>&1; exit 3; fi'
+      'for i in $(seq 1 40); do [ -s "$1" ] && break; sleep 0.5; done; ' +
+        'if [ -s "$1" ]; then cat "$1" >> "$2"; ' +
+        'else ls -la /etc/cloudflare /etc/cloudflare/certs 2>&1; exit 3; fi',
+      "sh",
+      EGRESS_CA,
+      SYSTEM_BUNDLE
     ]);
     const [stdout, exitCode] = await Promise.all([collect(process.stdout), process.exitCode]);
     if (exitCode !== 0) {
@@ -329,10 +356,9 @@ export class Sandbox extends LifecycleCapability {
     options: { cwd?: string; timeoutSeconds?: number; env?: Record<string, string>; signal?: AbortSignal } = {}
   ): Promise<RunResult> {
     const seconds = Math.min(options.timeoutSeconds ?? MAX_COMMAND_SECONDS, MAX_COMMAND_SECONDS);
-    const env = Object.entries(options.env ?? {}).map(([key, value]) => `${key}=${value}`);
     const start = this.#now();
     const process = await container.exec(
-      ["env", ...env, "timeout", "-k", "5", String(seconds), ...argv],
+      ["env", ...envArgs(options.env), "timeout", "-k", "5", String(seconds), ...argv],
       { cwd: options.cwd ?? WORKSPACE_ROOT, ...(options.signal ? { signal: options.signal } : {}) }
     );
     const [stdout, stderr, exitCode] = await Promise.all([

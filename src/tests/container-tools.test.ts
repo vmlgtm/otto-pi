@@ -3,7 +3,7 @@ import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import { ContainerEnv } from "../container-env";
 import { createCodingTools, createSandboxTools, createSearchTools } from "../container-tools";
-import { Sandbox } from "../sandbox";
+import { envArgs, Sandbox } from "../sandbox";
 import { FakeContainer, fakeEgress, memoryStorage, ufoReplies, unwrap } from "./fake-container";
 
 async function prepared(reply?: FakeContainer["reply"]) {
@@ -151,7 +151,7 @@ describe("ContainerEnv.exec", () => {
     const env = new ContainerEnv(sandbox, { id: "container:test", cwd: "/workspace/ufo" });
     const ran = await env.exec("npm test", { timeout: 5000 }, BACKGROUND_CONTEXT);
     expect(ran).toEqual({ ok: true, value: { exitCode: 0 } });
-    expect(container.execs.at(-1)!.argv).toEqual(["env", "timeout", "-k", "5", "600", "bash", "-c", "npm test"]);
+    expect(container.execs.at(-1)!.argv).toEqual(["env", ...envArgs(), "timeout", "-k", "5", "600", "bash", "-c", "npm test"]);
     const unsetting = new ContainerEnv(sandbox, { id: "container:test", cwd: "/workspace/ufo", unsetEnv: ["GITHUB_TOKEN"] });
     await unsetting.exec("env", undefined, BACKGROUND_CONTEXT);
     expect(container.execs.at(-1)!.argv.slice(0, 3)).toEqual(["env", "-u", "GITHUB_TOKEN"]);

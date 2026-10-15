@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseReceivePackCommands, repoOfPath } from "../egress";
 import { normalizeRepoUrl, findRepo, repoDir } from "../repos";
-import { Sandbox, WorkspaceLostError } from "../sandbox";
+import { envArgs, Sandbox, WorkspaceLostError } from "../sandbox";
 import {
   COMMIT,
   FakeContainer,
@@ -85,7 +85,17 @@ describe("the sandbox lifecycle", () => {
   it("caps every command at 600 seconds and kills its process group", async () => {
     const { container, sandbox } = setup();
     await sandbox.run(["sleep", "1"], { timeoutSeconds: 9999 });
-    expect(container.execs.at(-1)?.argv).toEqual(["env", "timeout", "-k", "5", "600", "sleep", "1"]);
+    expect(container.execs.at(-1)?.argv).toEqual(["env", ...envArgs(), "timeout", "-k", "5", "600", "sleep", "1"]);
+  });
+
+  it("sets the image's environment on every command, since the platform's exec does not pass it", async () => {
+    const { container, sandbox } = setup();
+    await sandbox.run(["node", "-v"], { env: { PATH: "/opt/node22/bin" } });
+    const argv = container.execs.at(-1)!.argv;
+    expect(argv).toContain("NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt");
+    expect(argv).toContain("GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt");
+    // The caller's values win over the image's.
+    expect(argv.filter((arg) => arg.startsWith("PATH="))).toEqual(["PATH=/opt/node22/bin"]);
   });
 
   it("allows only package-manager installs with internet, and only after a prepare", async () => {
