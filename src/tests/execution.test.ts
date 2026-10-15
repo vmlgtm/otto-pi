@@ -99,7 +99,7 @@ describe("Phase 4: shell execution in the session's container", () => {
       )
     );
     await client.until(() => !client.view().running);
-    expect(await stub.commands()).toContain("env GITHUB_TOKEN= GH_TOKEN= GIT_TOKEN= GITHUB_APP_PRIVATE_KEY= GITHUB_WEBHOOK_SECRET= NPM_TOKEN= NODE_AUTH_TOKEN= GIT_TERMINAL_PROMPT=0 timeout -k 5 600 bash -c node /workspace/calc.js");
+    expect(await stub.commands()).toContain("env -u GITHUB_TOKEN -u GH_TOKEN -u GIT_TOKEN -u GITHUB_APP_PRIVATE_KEY -u GITHUB_WEBHOOK_SECRET -u NPM_TOKEN -u NODE_AUTH_TOKEN GIT_TERMINAL_PROMPT=0 timeout -k 5 600 bash -c node /workspace/calc.js");
     socket.close();
   });
 

@@ -19,7 +19,12 @@ import { createDelegateTaskTool, SubagentTracker } from "./agents/orchestrator";
 import { interruptLogExtension } from "./interrupted";
 import { Sandbox } from "./sandbox";
 import { ContainerEnv } from "./container-env";
-import { createCodingTools, createSandboxTools, createSearchTools } from "./container-tools";
+import {
+  createCodingTools,
+  createSandboxTools,
+  createSearchTools,
+  CREDENTIAL_VARIABLES
+} from "./container-tools";
 
 export { OttoEgress } from "./egress";
 
@@ -120,7 +125,8 @@ export class PiAgent extends DurableObject<Env> {
           env: async (target) =>
             new ContainerEnv(this.sandbox, {
               id: `container:${this.ctx.id.toString()}`,
-              cwd: target.cwd ?? (await this.sandbox.cwd())
+              cwd: target.cwd ?? (await this.sandbox.cwd()),
+              unsetEnv: CREDENTIAL_VARIABLES
             }),
           settings: {
             retry: { enabled: true, maxRetries: 5, baseDelayMs: 1000 }

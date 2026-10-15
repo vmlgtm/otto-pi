@@ -76,7 +76,7 @@ describe("pi's coding tools on the container", () => {
     expect(bash.prepareArguments?.({ command: "ls", timeout: 30 })).toEqual({ command: "ls", timeout: 30 });
   });
 
-  it("run bash without credentials, in the repo, through the environment's shell", async () => {
+  it("run bash without credential variables, in the repo, through the environment's shell", async () => {
     const { sandbox } = await prepared();
     const seen: { command: unknown; options: unknown }[] = [];
     const env = {
@@ -97,8 +97,8 @@ describe("pi's coding tools on the container", () => {
     expect(seen[0]!.command).toBe("env");
     expect(options.cwd).toBe("/workspace/ufo");
     expect(options.timeout).toBe(600);
-    expect(options.env.GITHUB_TOKEN).toBe("");
-    expect(options.env.GH_TOKEN).toBe("");
+    expect(options.env).not.toHaveProperty("GITHUB_TOKEN");
+    expect(options.env).not.toHaveProperty("GH_TOKEN");
     expect(options.env.GIT_TERMINAL_PROMPT).toBe("0");
   });
 
@@ -152,6 +152,9 @@ describe("ContainerEnv.exec", () => {
     const ran = await env.exec("npm test", { timeout: 5000 }, BACKGROUND_CONTEXT);
     expect(ran).toEqual({ ok: true, value: { exitCode: 0 } });
     expect(container.execs.at(-1)!.argv).toEqual(["env", "timeout", "-k", "5", "600", "bash", "-c", "npm test"]);
+    const unsetting = new ContainerEnv(sandbox, { id: "container:test", cwd: "/workspace/ufo", unsetEnv: ["GITHUB_TOKEN"] });
+    await unsetting.exec("env", undefined, BACKGROUND_CONTEXT);
+    expect(container.execs.at(-1)!.argv.slice(0, 3)).toEqual(["env", "-u", "GITHUB_TOKEN"]);
     const missing = await env.exec(["missing-program"], undefined, BACKGROUND_CONTEXT);
     expect(missing.ok ? undefined : missing.error.code).toBe("spawn_error");
   });

@@ -28,7 +28,12 @@ import { WebSockets } from "agents/websockets";
 import { PiSessionSockets } from "../sockets";
 import { EMPTY_VIEW, reduceEvents } from "../view";
 import { ContainerEnv } from "../container-env";
-import { createCodingTools, createSandboxTools, createSearchTools } from "../container-tools";
+import {
+  createCodingTools,
+  createSandboxTools,
+  createSearchTools,
+  CREDENTIAL_VARIABLES
+} from "../container-tools";
 import { createGitTools } from "../git-tools";
 import { Sandbox } from "../sandbox";
 import { FakeContainer, fakeEgress, type FakeReply } from "./fake-container";
@@ -515,7 +520,8 @@ export class PiHarnessTestObject extends DurableObject<Env> {
           env: async (target) =>
             new ContainerEnv(this.sandbox, {
               id: "container:test",
-              cwd: target.cwd ?? (await this.sandbox.cwd())
+              cwd: target.cwd ?? (await this.sandbox.cwd()),
+              unsetEnv: CREDENTIAL_VARIABLES
             }),
           settings: {
             retry: { enabled: false, maxRetries: 0, baseDelayMs: 0 }

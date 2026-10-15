@@ -452,3 +452,34 @@ filesystem method goes through one helper in the image instead:
 against the real container: 24 of 24 cases pass, watch cases included.
 Each file operation costs one exec, about 0.2–0.5 s locally under Podman,
 mostly Node start-up.
+
+### Local end-to-end runs (15 Oct 2026, `pnpm start`, real Workers AI)
+
+The handoff's ufo prompt (Section 8, step 2), two sessions:
+
+1. `e2e-ufo-1792062695`: `prepare_workspace` worked (start 0.7 s,
+   ls-remote 1.5 s, clone 1.8 s, install 21 s). `git_checkout` with
+   `dir: "ufo"` failed: relative dirs resolved against the repo
+   (`/workspace/ufo/ufo`). Fixed: a relative `dir` is relative to
+   /workspace again. Then the model stream ended mid-`edit` call after
+   exactly 300 s ("The stream ended before the model finished its
+   answer", no finish reason), and pi recorded `model_error`. That is
+   Workers AI or the model, not the container; it did not recur in run 2.
+2. `e2e-ufo-1792063193` (28 min): a failing test first (`base.test.ts`:
+   28 tests, 4 failed, at 385 s), the fix in `src/utils.ts`, then every
+   vitest file passing (510 s), `pnpm run lint` (failed on formatting;
+   the model ran prettier and re-ran lint and tests), commit `a96a506`
+   on `otto/issue-1-fix-base-prefix-match`, and Reviewer approval. Push and
+   PR failed because `.dev.vars` has an empty `GITHUB_TOKEN`: the gateway
+   answered "GITHUB_TOKEN is not configured" and the GitHub API 401. The
+   final answer said so and quoted the real vitest output before and after.
+
+After the failed push the model went looking for a token itself: `env |
+grep token`, then printing `${GITHUB_TOKEN}` and trying `api.github.com`
+from node (403 from the gateway). Nothing was there, so the credential
+guardrail held. But `bash`'s prepare hook had set the credential variables
+to empty strings, and `env` listed them as set, which invited the search.
+They are now unset (`env -u NAME`, `ContainerEnv`'s `unsetEnv`), not blank.
+
+Idle stop: run 1's container stopped at 11:23:21 UTC, about 9 to 10
+minutes after its last tool call, with no session open.

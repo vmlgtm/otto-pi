@@ -109,12 +109,14 @@ export class ContainerEnv implements ExecutionEnv {
   readonly id: string;
   cwd: string;
   readonly #sandbox: Sandbox;
+  readonly #unset: readonly string[];
   readonly #running = new Set<ExecProcess>();
 
-  constructor(sandbox: Sandbox, options: { id: string; cwd: string }) {
+  constructor(sandbox: Sandbox, options: { id: string; cwd: string; unsetEnv?: readonly string[] }) {
     this.#sandbox = sandbox;
     this.id = options.id;
     this.cwd = options.cwd;
+    this.#unset = options.unsetEnv ?? [];
   }
 
   #resolve(path: string): string {
@@ -401,6 +403,8 @@ export class ContainerEnv implements ExecutionEnv {
     const env = Object.entries(options?.env ?? {}).map(([key, value]) => `${key}=${value}`);
     const wrapped = [
       "env",
+      // Absent, not empty: an empty GITHUB_TOKEN still reads as "a token is set".
+      ...this.#unset.flatMap((name) => ["-u", name]),
       ...(options?.inheritEnv === false ? ["-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"] : []),
       ...env,
       "timeout",

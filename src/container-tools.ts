@@ -9,8 +9,11 @@ import {
 import { REPOS } from "./repos";
 import { commandEnv, MAX_COMMAND_SECONDS, type RunResult, type Sandbox } from "./sandbox";
 
-/** Credentials a command could look for. None is set in the container; this keeps it that way. */
-const CREDENTIAL_VARIABLES = [
+/**
+ * Credentials a command could look for. None is set in the container;
+ * ContainerEnv unsets them anyway (`env -u`), so they are absent, not empty.
+ */
+export const CREDENTIAL_VARIABLES = [
   "GITHUB_TOKEN",
   "GH_TOKEN",
   "GIT_TOKEN",
@@ -151,7 +154,6 @@ export function createCodingTools(sandbox: Sandbox): ToolRegistration[] {
       for (const name of Object.keys(execution.env)) {
         if (/token|secret|password|private_key|credential/i.test(name)) delete execution.env[name];
       }
-      for (const name of CREDENTIAL_VARIABLES) execution.env[name] = "";
       execution.env.GIT_TERMINAL_PROMPT = "0";
       Object.assign(execution.env, commandEnv((await sandbox.workspace())?.node));
     }
