@@ -21,7 +21,12 @@ const BACKGROUND_CONTEXT = Object.freeze({
 
 export const MAX_CONCURRENT_SUBAGENTS = 3;
 export const MAX_SUBAGENT_TURNS = 10;
-export const MAX_SUBAGENT_TIMEOUT_MS = 60_000;
+/**
+ * Wall clock for one subagent. Phase 3 had 60 s, when every tool ran in the
+ * Worker; with real installs and test runs in the container, one test run
+ * can take that long, so it matches the 600 s command cap.
+ */
+export const MAX_SUBAGENT_TIMEOUT_MS = 600_000;
 
 export interface DelegateTaskInput {
   role: "explorer" | "coder" | "reviewer";
@@ -207,7 +212,7 @@ export const DelegateTaskParameters = Type.Object({
   ),
   timeoutMs: Type.Optional(
     Type.Number({
-      description: "Maximum execution timeout in ms (capped at 60,000ms)"
+      description: "Maximum execution timeout in ms (capped at 600,000ms)"
     })
   )
 });
