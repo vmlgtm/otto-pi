@@ -1,0 +1,19 @@
+src/agents/orchestrator.ts
+  s_f1c9cde74215b2::t_2f0363bc2e10ae 24-29,215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0a5c949abed9bc71fa5ba396f2f64ee7b0c987cf",
+  "prompts": {},
+  "sessions": {
+    "s_f1c9cde74215b2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c8eb39b-9676-46eb-ae80-a98e22161edb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Vaibhav Misra <vaibhav.misra@1mg.com>"
+    }
+  }
+}
