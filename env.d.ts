@@ -11,6 +11,9 @@ interface __BaseEnv_Env {
   DEV_ROUTES?: string;
   // "on" lets prepare_workspace save and restore container snapshots (public beta).
   SANDBOX_SNAPSHOTS?: string;
+  // "opencode/<id>" runs sessions on OpenCode Zen instead of Workers AI (see server.ts).
+  OTTO_MODEL?: string;
+  OPENCODE_API_KEY?: string;
 }
 declare namespace Cloudflare {
   interface GlobalProps {

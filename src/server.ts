@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { createModels } from "@earendil-works/pi-ai/models";
+import { opencodeProvider } from "@earendil-works/pi-ai/providers/opencode";
 import { createRegistry, Harness } from "@earendil-works/pi-durable";
 import { routeAgentRequest } from "agents";
 import {
@@ -29,6 +30,17 @@ import {
 export { OttoEgress } from "./egress";
 
 const MODEL_ID = "@cf/qwen/qwen3.8-27b";
+
+/**
+ * `OTTO_MODEL` picks a model outside Workers AI, as `<provider>/<id>`; only
+ * `opencode/<id>` (OpenCode Zen, key in OPENCODE_API_KEY) is wired. Unset:
+ * Workers AI's Qwen through the AI binding. OpenCode calls do not go through
+ * AI Gateway, so its spend limits do not apply to them.
+ */
+function externalModel(spec: string | undefined): { provider: string; id: string } | undefined {
+  const match = /^opencode\/(.+)$/.exec(spec?.trim() ?? "");
+  return match ? { provider: "opencode", id: match[1] } : undefined;
+}
 
 const PREAMBLE =
   "You are an autonomous engineering assistant and lead architect. You coordinate specialist subagents ('explorer', 'coder', 'reviewer') via delegate_task. Work happens in a Linux container for this session: first call prepare_workspace with the repository's clone URL, which clones it into /workspace/<name> and installs its dependencies (internet is on only for that step). Then read, write and edit files, list (ls), find and grep them, and run real commands with bash: the repository's own test runner, git, node, npm, pnpm or yarn. Internet is off for bash; to add a dependency, call prepare_workspace again with an install command. run_checks runs the repository's configured test and lint commands. You have Git tools (git_checkout, git_status, git_diff, git_commit, git_push), GitHub integration tools (github_get_issue, github_create_pull_request, github_add_comment), and external MCP tools. Guardrails enforce that pushes to protected branches ('main', 'master', etc.) and force pushes are disabled; all PRs default to draft, and feature branches must follow 'otto/<issue-id>-<short-description>'. Only git_push can push: a push typed into bash has no credentials. Direct remote pushes are prohibited until the reviewer subagent has approved the changes. Verify every change by running the tests, never by reasoning about them, and show the real test output.";
@@ -70,6 +82,8 @@ export async function verifyGitHubSignature(
 export class PiAgent extends DurableObject<Env> {
   // Workers AI and AI Gateway over the AI binding, as a pi-ai provider.
   readonly ai = createAI({ binding: this.env.AI });
+  // The model every session uses: OTTO_MODEL when set, else Workers AI.
+  readonly model = externalModel(this.env.OTTO_MODEL) ?? this.ai(MODEL_ID);
   // One container per session, started on first use (src/sandbox.ts).
   readonly sandbox = new Sandbox({
     container: () => this.ctx.container,
@@ -104,7 +118,7 @@ export class PiAgent extends DurableObject<Env> {
         changedFiles: () => this.sandbox.changedFiles(),
         allTools,
         tracker: this.tracker,
-        defaultModel: this.ai(MODEL_ID)
+        defaultModel: this.model
       });
 
       this.registry.install(interruptLogExtension(() => this.harness));
@@ -114,8 +128,15 @@ export class PiAgent extends DurableObject<Env> {
         tools: [delegateTaskTool, ...allTools]
       });
 
-      const models = createModels();
+      // Provider keys come from the Worker's env (secrets), not process.env.
+      const models = createModels({
+        authContext: {
+          env: async (name) => (this.env as unknown as Record<string, string | undefined>)[name],
+          fileExists: async () => false
+        }
+      });
       models.setProvider(this.ai.provider);
+      models.setProvider(opencodeProvider());
       return Harness.open(
         storage,
         {
@@ -136,7 +157,7 @@ export class PiAgent extends DurableObject<Env> {
         context
       );
     },
-    defaults: { model: this.ai(MODEL_ID), thinkingLevel: "low" }
+    defaults: { model: this.model, thinkingLevel: "low" }
   });
 
   // App glue, not the harness: how this app puts sessions on a socket.
@@ -144,8 +165,13 @@ export class PiAgent extends DurableObject<Env> {
     this.harness,
     this.registry,
     (tag) => this.ctx.getWebSockets(tag),
-    this.ai(MODEL_ID),
-    [this.env.GITHUB_TOKEN, this.env.GITHUB_APP_PRIVATE_KEY, this.env.GITHUB_WEBHOOK_SECRET],
+    this.model,
+    [
+      this.env.GITHUB_TOKEN,
+      this.env.GITHUB_APP_PRIVATE_KEY,
+      this.env.GITHUB_WEBHOOK_SECRET,
+      this.env.OPENCODE_API_KEY
+    ],
     this.tracker
   );
   readonly webSockets = new WebSockets(this.sockets.options());
@@ -198,7 +224,7 @@ export class PiAgent extends DurableObject<Env> {
   async onStart(): Promise<void> {
     await this.sockets.reattach();
     try {
-      await this.harness.session().setModel(this.ai(MODEL_ID));
+      await this.harness.session().setModel(this.model);
     } catch (error) {
       console.warn("Could not set default model onStart", error);
     }
