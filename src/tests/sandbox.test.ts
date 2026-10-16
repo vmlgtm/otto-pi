@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { parseReceivePackCommands, repoOfPath } from "../egress";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { OttoEgress, parseReceivePackCommands, repoOfPath, type EgressProps } from "../egress";
 import { normalizeRepoUrl, findRepo, repoDir } from "../repos";
 import { envArgs, Sandbox, WorkspaceLostError } from "../sandbox";
 import {
@@ -205,5 +205,61 @@ describe("the egress gateway's parsing", () => {
       { old: "c".repeat(40), new: "0".repeat(40), ref: "refs/heads/main" }
     ]);
     expect(() => parseReceivePackCommands(new TextEncoder().encode("zzzz"))).toThrow();
+  });
+});
+
+describe("the egress gateway", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const gateway = (props: EgressProps) =>
+    new OttoEgress({ props } as never, { GITHUB_TOKEN: "ghp_test" } as never);
+  const line = (text: string) => `${(text.length + 4).toString(16).padStart(4, "0")}${text}`;
+  const pushBody = (ref: string) =>
+    `${line(`${"a".repeat(40)} ${"b".repeat(40)} ${ref}\0report-status`)}0000PACKDATA`;
+  const push = (ref: string) =>
+    new Request("https://github.com/vmlgtm/ufo.git/git-receive-pack", {
+      method: "POST",
+      headers: { "content-type": "application/x-git-receive-pack-request", authorization: "Basic forged" },
+      body: pushBody(ref)
+    });
+  const granted: EgressProps = {
+    phase: "locked",
+    repo: "vmlgtm/ufo",
+    push: { repo: "vmlgtm/ufo", branch: "otto/issue-1-fix" }
+  };
+
+  it("forwards an allowed push with its body and the token, never the container's credentials", async () => {
+    const sent: { auth: string | null; body: string }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
+      const request = new Request(input, init);
+      sent.push({ auth: request.headers.get("authorization"), body: await request.text() });
+      return new Response("ok");
+    });
+    const response = await gateway(granted).fetch(push("refs/heads/otto/issue-1-fix"));
+    expect(response.status).toBe(200);
+    expect(sent).toEqual([{ auth: `Basic ${btoa("x-access-token:ghp_test")}`, body: pushBody("refs/heads/otto/issue-1-fix") }]);
+  });
+
+  it("refuses a push to any other ref, and any push without a grant", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    expect((await gateway(granted).fetch(push("refs/heads/main"))).status).toBe(403);
+    expect((await gateway({ phase: "locked", repo: "vmlgtm/ufo" }).fetch(push("refs/heads/otto/issue-1-fix"))).status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("forwards fetches of the session's repo without credentials, and nothing else", async () => {
+    const auths: (string | null)[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) => {
+      auths.push((input as Request).headers.get("authorization"));
+      return new Response("ok");
+    });
+    const locked = gateway({ phase: "locked", repo: "vmlgtm/ufo" });
+    const upload = new Request("https://github.com/vmlgtm/ufo.git/info/refs?service=git-upload-pack", {
+      headers: { authorization: "Basic forged" }
+    });
+    expect((await locked.fetch(upload)).status).toBe(200);
+    expect(auths).toEqual([null]);
+    expect((await locked.fetch(new Request("https://registry.npmjs.org/vitest"))).status).toBe(403);
+    expect((await locked.fetch(new Request("https://github.com/other/repo.git/info/refs?service=git-upload-pack"))).status).toBe(403);
   });
 });

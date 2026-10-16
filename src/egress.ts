@@ -73,11 +73,15 @@ export class OttoEgress extends WorkerEntrypoint<Env, EgressProps> {
   async fetch(request: Request): Promise<Response> {
     const props = this.ctx.props;
     const url = new URL(request.url);
-    // Credentials the container tried to send are never forwarded.
-    const outbound = new Request(request);
-    outbound.headers.delete("authorization");
+    // Credentials the container tried to send are never forwarded. Built only
+    // when forwarding: copying a Request consumes its body, which a push still needs.
+    const forward = () => {
+      const outbound = new Request(request);
+      outbound.headers.delete("authorization");
+      return fetch(outbound);
+    };
 
-    if (props.phase === "setup") return fetch(outbound);
+    if (props.phase === "setup") return forward();
 
     if (url.hostname !== GITHUB_HOST) {
       return deny(`${url.hostname} is not reachable outside prepare_workspace`);
@@ -90,7 +94,7 @@ export class OttoEgress extends WorkerEntrypoint<Env, EgressProps> {
       if (props.repo && repo !== props.repo.toLowerCase()) {
         return deny(`fetches are limited to ${props.repo}`);
       }
-      return fetch(outbound);
+      return forward();
     }
     if (service !== "git-receive-pack") return deny(`unknown git service ${service}`);
 
