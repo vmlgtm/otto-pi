@@ -1,0 +1,21 @@
+NOTES.md
+  s_1fdc9137655223::t_07d2ebe0e2e659 507,511-514,536-537
+wrangler.jsonc
+  s_1fdc9137655223::t_d11fbf01e0063f 9-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3adf21be19805d45aaec764fd681441a4642afec",
+  "prompts": {},
+  "sessions": {
+    "s_1fdc9137655223": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b4444b6-af92-4a7d-878e-55f33a696715",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Vaibhav Misra <vaibhav.misra@1mg.com>"
+    }
+  }
+}
