@@ -29,8 +29,8 @@ export const REPOS: Readonly<Record<string, RepoConfig>> = {
     node: "24",
     ref: "trunk",
     install: ["yarn", "install", "--immutable"],
-    // Set once the Calypso run confirms one small package's Jest command (NOTES.md).
-    test: null,
+    // One small package's Jest run, as the deployed Calypso check ran it (NOTES.md).
+    test: ["sh", "-c", "cd packages/i18n-utils && ../../node_modules/.bin/jest --config jest.config.js"],
     lint: null,
     instance: "standard-4"
   }
