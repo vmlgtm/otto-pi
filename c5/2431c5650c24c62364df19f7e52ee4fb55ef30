@@ -1,0 +1,19 @@
+NOTES.md
+  s_1fdc9137655223::t_da39e297de2d4f 577-629
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c52431c5650c24c62364df19f7e52ee4fb55ef30",
+  "prompts": {},
+  "sessions": {
+    "s_1fdc9137655223": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b4444b6-af92-4a7d-878e-55f33a696715",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Vaibhav Misra <vaibhav.misra@1mg.com>"
+    }
+  }
+}
