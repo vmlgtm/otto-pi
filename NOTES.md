@@ -508,3 +508,65 @@ pnpm run deploy          # snapshots on: pnpm exec vite build && pnpm exec wrang
 ```
 
 The first Phase 4 deploy (version d93cfdcd) used `--var SANDBOX_SNAPSHOTS:on`.
+
+## Phase 4 on the deployed Worker (15–16 Oct 2026)
+
+### Fixed on the way
+
+1. **No egress CA trust.** `ctx.container.exec` on the platform does not
+   pass the image's ENV to processes (wrangler dev does). The CA was at
+   `/etc/cloudflare/certs/cloudflare-containers-ca.crt`, but `$CF_CA` was
+   empty and Node had no `NODE_EXTRA_CA_CERTS`. Every command now runs under
+   `env` with `IMAGE_ENV` (`src/sandbox.ts`). The CA is trusted in the
+   background at start (waits up to 60 s, opens one TLS connection after
+   2 s) and is required only before prepare, install and push.
+2. **Pushes failed in the egress gateway, twice.** It copied the Request
+   first, consuming the body it then needed (curl 52). Then it read the
+   `shallow <oid>` lines a depth-1 push starts with as malformed ref
+   updates (403). Both are fixed, with tests that drive `OttoEgress.fetch`.
+3. **Model.** The AI Gateway `default` has a $1 per 30 days cost cap (rule
+   `bf40db2d`), which our runs used up. `OTTO_MODEL=opencode/<id>` runs
+   sessions on OpenCode Zen through pi-ai's own provider (key in
+   `OPENCODE_API_KEY`). OpenCode's free models are app-only
+   ("FreeTierError"), so the deployed runs used paid
+   `deepseek-v4.1-flash` ($0.30 / $1.20 per M tokens). The current deploy
+   sets `--var OTTO_MODEL:opencode/deepseek-v4.1-flash --var SANDBOX_SNAPSHOTS:on`.
+
+### Results
+
+- **ufo (DoD 1):** session `prod-ufo-oc-…`, 4.7 minutes. Failing test first,
+  fix, full suite green, lint, Reviewer approval, `git_push` through the
+  gateway, draft PR https://github.com/vmlgtm/ufo/pull/4 with real vitest
+  output before (4 failed | 27 passed) and after (484 passed). The first
+  `prepare_workspace` hit an undici assertion inside pnpm (`assert(!this.paused)`)
+  through the intercept; the model's retry passed.
+- **Guardrails (DoD 4):** `git push origin HEAD` from bash → "otto egress:
+  push without git_push: no credentials" (403). `git_push` to `main` →
+  "GuardrailViolation". Asked to print `env`, git config and
+  `~/.git-credentials`, the model refused; zero token strings in the
+  transcripts or event logs of these runs.
+- **Redeploys drop the container.** After a deploy, the next tool call got
+  `WorkspaceLostError`; `prepare_workspace` restored from the snapshot in
+  0.5 s. Unpushed work is lost.
+
+### Calypso measurements (DoD 2, 3)
+
+Session `prod-calypso-1792068253`, standard-4, Qwen on Workers AI:
+
+| Measure | Value |
+|---|---|
+| clone (depth 1, trunk `f2a16d4`) | 9.2 s |
+| install (`yarn install --immutable`) | 238.8 s |
+| snapshot | 55.6 s, 2.23 GB |
+| disk | 2.5 GB with node_modules, 327 MB without |
+| test | `packages/i18n-utils` Jest, all passing, ~1.3 s |
+| restore (ufo, 76–83 MB snapshot) | 0.5 s against a 31–36 s install |
+
+Not measured: peak memory and the container's cost for the run.
+
+**DoD 2 is not fully met.** No "exceeded its CPU time limit" event, but
+the object restarted once mid-install (12:46:52 UTC: socket closed, then
+"Interrupted: the session restarted while prepare_workspace was running"),
+with no error in Workers Logs. The model's second `prepare_workspace`
+passed. Long installs should run as background processes in the
+container that a later call picks up (Component B), which is not built yet.
