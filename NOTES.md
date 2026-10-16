@@ -574,3 +574,56 @@ the object restarted once mid-install (12:46:52 UTC: socket closed, then
 with no error in Workers Logs. The model's second `prepare_workspace`
 passed. Long installs should run as background processes in the
 container that a later call picks up (Component B), which is not built yet.
+
+## Phase 4 on Workers Builds: previews and the merge to main (16 Oct 2026)
+
+Workers Builds deploys the repo: each pushed branch becomes a Preview
+(`https://<branch-slug>-otto-pi.aspiring-nest.workers.dev`), and a merge to
+`main` deploys the production Worker. The manual Phase 4 deploys set
+`OTTO_MODEL` and `SANDBOX_SNAPSHOTS` with `--var` flags, and every deploy
+replaces a Worker's vars, so a build would have dropped both. Both now live
+in `wrangler.jsonc`.
+
+### Production (`main`)
+
+- **Config, done.** Top-level `vars` sets
+  `OTTO_MODEL=opencode/deepseek-v4.1-flash` and `SANDBOX_SNAPSHOTS=on`
+  (commit `3adf21b`).
+- **Secrets, nothing to do.** `GITHUB_TOKEN` and `OPENCODE_API_KEY` are on
+  the Worker already and survive deploys.
+- **Check in the Workers Builds settings:** the deploy command builds the
+  front end first (`pnpm run deploy`, or `vite build && wrangler deploy`),
+  and the build pushes the container image from `Dockerfile`.
+- **On merge:** the deploy drops running containers. Unpushed work in a
+  live session is lost; its next tool call gets `WorkspaceLostError` and
+  `prepare_workspace` restores from the snapshot.
+
+### Previews (branches)
+
+A Preview takes nothing from the top level of `wrangler.jsonc`: not vars,
+not containers, not secrets. The first `feat/phase-4-container-sandbox`
+Preview (deployments 1 and 2) had only the `AI` and `PiAgent` bindings, so
+sessions ran on Workers AI through the capped AI Gateway, with no container.
+
+- **Config, done.** The `previews` block has the same `vars` and
+  `containers` entry as the top level (commit `28235cf`). Keep the two in
+  step when either changes.
+- **Secrets, to do once.** Previews keep their own secrets. Set them on the
+  Preview base config, which every Preview shares:
+
+  ```sh
+  pnpm exec wrangler preview base-config secret put OPENCODE_API_KEY
+  pnpm exec wrangler preview base-config secret put GITHUB_TOKEN
+  ```
+
+  If an existing Preview doesn't pick them up (open beta), set them on that
+  Preview with `wrangler preview secret put <key>`, which deploys it again.
+  `wrangler preview secret list` shows what the latest deployment has.
+- **Check:** a session on the Preview URL reports `deepseek-v4.1-flash`, and
+  `prepare_workspace` gets past the clone.
+
+### Local dev
+
+Top-level `vars` apply to `pnpm start` too. `.dev.vars` sets a blank
+`OTTO_MODEL=` so local sessions stay on Workers AI without an
+`OPENCODE_API_KEY`.
