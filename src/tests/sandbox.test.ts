@@ -206,6 +206,18 @@ describe("the egress gateway's parsing", () => {
     ]);
     expect(() => parseReceivePackCommands(new TextEncoder().encode("zzzz"))).toThrow();
   });
+
+  it("skips the shallow lines a push from a depth-1 clone starts with", () => {
+    const line = (text: string) => `${(text.length + 4).toString(16).padStart(4, "0")}${text}`;
+    const body = new TextEncoder().encode(
+      line(`shallow ${"5".repeat(40)}\n`) +
+        line(`${"0".repeat(40)} ${"b".repeat(40)} refs/heads/otto/x\0 report-status-v2 side-band-64k object-format=sha1 agent=git/2.47.3`) +
+        "0000PACK"
+    );
+    expect(parseReceivePackCommands(body)).toEqual([
+      { old: "0".repeat(40), new: "b".repeat(40), ref: "refs/heads/otto/x" }
+    ]);
+  });
 });
 
 describe("the egress gateway", () => {

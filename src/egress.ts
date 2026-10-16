@@ -39,8 +39,8 @@ export function repoOfPath(pathname: string): string | undefined {
 
 /**
  * The ref updates at the start of a receive-pack request body, in git's
- * pkt-line format: `<old> <new> <ref>[\0capabilities]` per line, ended by a
- * flush packet `0000`.
+ * pkt-line format: optional `shallow <oid>` lines, then
+ * `<old> <new> <ref>[\0capabilities]` per line, ended by a flush packet `0000`.
  */
 export function parseReceivePackCommands(
   body: Uint8Array
@@ -54,11 +54,14 @@ export function parseReceivePackCommands(
     if (length === 0) return commands;
     if (length < 4 || offset + length > body.length) throw new Error("malformed pkt-line");
     const line = decoder.decode(body.subarray(offset + 4, offset + length));
+    offset += length;
+    // A push from a shallow clone (prepare_workspace clones at depth 1) names
+    // its shallow commits first; they are not ref updates.
+    if (line.startsWith("shallow ")) continue;
     const [command] = line.split("\0");
     const [oldOid, newOid, ref] = command.trim().split(" ");
     if (!oldOid || !newOid || !ref) throw new Error("malformed ref update");
     commands.push({ old: oldOid, new: newOid, ref });
-    offset += length;
   }
   throw new Error("receive-pack request has no flush packet");
 }
