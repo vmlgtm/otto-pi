@@ -504,10 +504,14 @@ inspect of a `registry.cloudflare.com` image with the saved digest. Deploy:
 node scripts/podman-socket-proxy.mjs /tmp/otto-docker.sock &   # if not running
 export WRANGLER_DOCKER_BIN="$PWD/scripts/podman-as-docker.sh"
 export DOCKER_HOST=unix:///tmp/otto-docker.sock
-pnpm run deploy          # snapshots on: pnpm exec vite build && pnpm exec wrangler deploy --var SANDBOX_SNAPSHOTS:on
+pnpm run deploy
 ```
 
 The first Phase 4 deploy (version d93cfdcd) used `--var SANDBOX_SNAPSHOTS:on`.
+`OTTO_MODEL` and `SANDBOX_SNAPSHOTS` are now in `wrangler.jsonc` `vars`, so a
+plain deploy (or a Workers Builds deploy on merge) keeps them; `--var` flags
+would be lost on the next deploy without them. `.dev.vars` sets `OTTO_MODEL=`
+so local dev stays on Workers AI.
 
 ## Phase 4 on the deployed Worker (15–16 Oct 2026)
 
@@ -529,8 +533,8 @@ The first Phase 4 deploy (version d93cfdcd) used `--var SANDBOX_SNAPSHOTS:on`.
    sessions on OpenCode Zen through pi-ai's own provider (key in
    `OPENCODE_API_KEY`). OpenCode's free models are app-only
    ("FreeTierError"), so the deployed runs used paid
-   `deepseek-v4.1-flash` ($0.30 / $1.20 per M tokens). The current deploy
-   sets `--var OTTO_MODEL:opencode/deepseek-v4.1-flash --var SANDBOX_SNAPSHOTS:on`.
+   `deepseek-v4.1-flash` ($0.30 / $1.20 per M tokens). `wrangler.jsonc`
+   sets `OTTO_MODEL=opencode/deepseek-v4.1-flash` and `SANDBOX_SNAPSHOTS=on`.
 
 ### Results
 

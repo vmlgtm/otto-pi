@@ -6,6 +6,11 @@
   "compatibility_date": "2026-06-11",
   "compatibility_flags": ["nodejs_compat"],
   "ai": { "binding": "AI", "remote": true },
+  // Vars are replaced on every deploy, so the live settings live here, not in --var flags.
+  "vars": {
+    "OTTO_MODEL": "opencode/deepseek-v4.1-flash",
+    "SANDBOX_SNAPSHOTS": "on"
+  },
 
   "previews": {
     "ai": { "binding": "AI", "remote": true },
