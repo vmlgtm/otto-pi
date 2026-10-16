@@ -12,7 +12,19 @@
     "SANDBOX_SNAPSHOTS": "on"
   },
 
+  // Previews (Workers Builds on a branch) take nothing from the top level: no vars, containers or secrets.
   "previews": {
+    "vars": {
+      "OTTO_MODEL": "opencode/deepseek-v4.1-flash",
+      "SANDBOX_SNAPSHOTS": "on"
+    },
+    "containers": [
+      {
+        "class_name": "PiAgent",
+        "scheduling_policy": "durable_object",
+        "images": { "workspace": { "dockerfile": "./Dockerfile" } }
+      }
+    ],
     "ai": { "binding": "AI", "remote": true },
     "durable_objects": {
       "bindings": [
