@@ -1,0 +1,19 @@
+NOTES.md
+  s_f1c9cde74215b2::t_bf71d5352abb63 511-572
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3f3f7ea729c1a5763645374be6b74d08d11e15a5",
+  "prompts": {},
+  "sessions": {
+    "s_f1c9cde74215b2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c8eb39b-9676-46eb-ae80-a98e22161edb",
+        "model": "unknown"
+      },
+      "human_author": "Vaibhav Misra <vaibhav.misra@1mg.com>"
+    }
+  }
+}
